@@ -26,7 +26,13 @@ const INITIAL_UNITS: usize = 4000;
 fn main() -> AppExit {
     App::new()
         .add_plugins((
-            DefaultPlugins,
+            DefaultPlugins.set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "MIZU".into(),
+                    ..default()
+                }),
+                ..default()
+            }),
             FrameTimeDiagnosticsPlugin::default(),
             Material2dPlugin::<WaterMaterial>::default(),
         ))
@@ -340,7 +346,7 @@ fn setup(
 
     // On-screen HUD (Layer 0)
     commands.spawn((
-        Text::new("Bevy 0.18 2D Crowd Demo"),
+        Text::new("MIZU"),
         TextFont {
             font_size: 16.0,
             ..default()
@@ -880,7 +886,7 @@ fn update_hud(
     let status = if state.paused { "PAUSED" } else { "RUNNING" };
     for mut text in &mut q {
         **text = format!(
-            "Bevy 0.18 2D Crowd Demo | Mode: {mode} | Units: {} | FPS: {fps:.0} | {status}\n\
+            "MIZU | Mode: {mode} | Units: {} | FPS: {fps:.0} | {status}\n\
              W: Water/Particles  |  Left/Right-Drag: Repel/Attract  |  [/] or Scroll: Force  |  +/Up & -/Down: ±500  |  Space: Pause  |  R: Reset",
             state.unit_count
         );
