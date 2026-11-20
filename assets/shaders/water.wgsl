@@ -4,10 +4,14 @@
 @group(2) @binding(1) var density_sampler: sampler;
 
 struct WaterParams {
+    sparse_color: vec4<f32>,
+    mid_color: vec4<f32>,
+    dense_color: vec4<f32>,
+    rim_color: vec4<f32>,
     time: f32,
     threshold: f32,
     foam_width: f32,
-    _pad: f32,
+    shimmer: f32,
 };
 
 @group(2) @binding(2) var<uniform> params: WaterParams;
@@ -34,26 +38,22 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // Normalize density above threshold (packed non-overlapping units peak around ~0.55-0.60)
-    let raw_depth = clamp((d - params.threshold) / (0.56 - params.threshold), 0.0, 1.0);
+    let raw_depth = clamp((d - params.threshold) / max(0.56 - params.threshold, 0.05), 0.0, 1.0);
     let depth = pow(raw_depth, 0.85);
 
-    // Strong contrast: light/airy cyan in sparse areas -> deep dark navy in tight clumps
-    let sparse_color = vec3<f32>(0.42, 0.88, 0.98);
-    let mid_color    = vec3<f32>(0.07, 0.42, 0.82);
-    let dense_color  = vec3<f32>(0.01, 0.05, 0.16);
-
-    var color = mix(sparse_color, mid_color, smoothstep(0.0, 0.45, depth));
-    color = mix(color, dense_color, smoothstep(0.35, 1.0, depth));
+    var color = mix(params.sparse_color.rgb, params.mid_color.rgb, smoothstep(0.0, 0.45, depth));
+    color = mix(color, params.dense_color.rgb, smoothstep(0.35, 1.0, depth));
 
     // Subtle surface-tension highlight right at the outer boundary
-    let rim = 1.0 - smoothstep(params.threshold, params.threshold + params.foam_width, d);
-    let rim_color = vec3<f32>(0.78, 0.96, 1.0);
-    color = mix(color, rim_color, rim * 0.45);
+    if params.foam_width > 0.001 {
+        let rim = 1.0 - smoothstep(params.threshold, params.threshold + params.foam_width, d);
+        color = mix(color, params.rim_color.rgb, rim * 0.45);
+    }
 
     // Subtle organic shimmer
     let wave = sin(mesh.uv.x * 38.0 + params.time * 1.8)
              * cos(mesh.uv.y * 26.0 - params.time * 1.4) * 0.5 + 0.5;
-    color += vec3<f32>(0.02, 0.05, 0.08) * wave * (1.0 - depth * 0.7);
+    color += vec3<f32>(0.02, 0.05, 0.08) * params.shimmer * wave * (1.0 - depth * 0.7);
 
     return vec4<f32>(color, body * 0.96);
 }

@@ -28,12 +28,115 @@ pub struct WaterQuad;
 #[derive(Component)]
 pub struct OffscreenCamera;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WaterPalette {
+    #[default]
+    Ocean,
+    Lava,
+    Slime,
+    Ink,
+    Sunset,
+}
+
+impl WaterPalette {
+    pub const ALL: [Self; 5] = [
+        Self::Ocean,
+        Self::Lava,
+        Self::Slime,
+        Self::Ink,
+        Self::Sunset,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Ocean => "Ocean",
+            Self::Lava => "Lava",
+            Self::Slime => "Slime",
+            Self::Ink => "Ink",
+            Self::Sunset => "Sunset",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        let idx = Self::ALL.iter().position(|&p| p == self).unwrap_or(0);
+        Self::ALL[(idx + 1) % Self::ALL.len()]
+    }
+
+    pub fn prev(self) -> Self {
+        let idx = Self::ALL.iter().position(|&p| p == self).unwrap_or(0);
+        Self::ALL[(idx + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
+
+    pub fn colors(self) -> (Vec4, Vec4, Vec4, Vec4) {
+        match self {
+            Self::Ocean => (
+                Vec4::new(0.42, 0.88, 0.98, 1.0),
+                Vec4::new(0.07, 0.42, 0.82, 1.0),
+                Vec4::new(0.01, 0.05, 0.16, 1.0),
+                Vec4::new(0.78, 0.96, 1.00, 1.0),
+            ),
+            Self::Lava => (
+                Vec4::new(1.00, 0.62, 0.14, 1.0),
+                Vec4::new(0.84, 0.16, 0.05, 1.0),
+                Vec4::new(0.14, 0.02, 0.02, 1.0),
+                Vec4::new(1.00, 0.90, 0.48, 1.0),
+            ),
+            Self::Slime => (
+                Vec4::new(0.58, 0.98, 0.28, 1.0),
+                Vec4::new(0.10, 0.68, 0.24, 1.0),
+                Vec4::new(0.02, 0.14, 0.06, 1.0),
+                Vec4::new(0.82, 1.00, 0.68, 1.0),
+            ),
+            Self::Ink => (
+                Vec4::new(0.56, 0.62, 0.78, 1.0),
+                Vec4::new(0.16, 0.18, 0.34, 1.0),
+                Vec4::new(0.02, 0.02, 0.06, 1.0),
+                Vec4::new(0.84, 0.86, 0.98, 1.0),
+            ),
+            Self::Sunset => (
+                Vec4::new(1.00, 0.56, 0.42, 1.0),
+                Vec4::new(0.74, 0.18, 0.54, 1.0),
+                Vec4::new(0.14, 0.03, 0.20, 1.0),
+                Vec4::new(1.00, 0.86, 0.62, 1.0),
+            ),
+        }
+    }
+
+    pub fn apply_to(self, params: &mut WaterParams) {
+        let (sparse, mid, dense, rim) = self.colors();
+        params.sparse_color = sparse;
+        params.mid_color = mid;
+        params.dense_color = dense;
+        params.rim_color = rim;
+    }
+}
+
 #[derive(ShaderType, Debug, Clone, Copy)]
 pub struct WaterParams {
+    pub sparse_color: Vec4,
+    pub mid_color: Vec4,
+    pub dense_color: Vec4,
+    pub rim_color: Vec4,
     pub time: f32,
     pub threshold: f32,
     pub foam_width: f32,
-    pub _pad: f32,
+    pub shimmer: f32,
+}
+
+impl Default for WaterParams {
+    fn default() -> Self {
+        let (sparse_color, mid_color, dense_color, rim_color) = WaterPalette::Ocean.colors();
+        Self {
+            sparse_color,
+            mid_color,
+            dense_color,
+            rim_color,
+            time: 0.0,
+            threshold: 0.15,
+            foam_width: 0.05,
+            shimmer: 1.0,
+        }
+    }
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
@@ -175,12 +278,7 @@ pub fn setup_scene(
     // Full-arena water shader quad (Layer 0)
     let water_material = water_materials.add(WaterMaterial {
         density_texture: rt_handle,
-        params: WaterParams {
-            time: 0.0,
-            threshold: 0.15,
-            foam_width: 0.05,
-            _pad: 0.0,
-        },
+        params: WaterParams::default(),
     });
 
     commands.spawn((

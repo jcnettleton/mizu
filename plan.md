@@ -55,26 +55,26 @@
 
 ---
 
-## Phase 2 — Water Shader Colors & Control Panel
+## Phase 2 — Water Shader Colors & Control Panel (Done)
 
-- [ ] **2A: Water color presets**
-  - **Files:** `assets/shaders/water.wgsl`, `src/water.rs` (or `src/main.rs`), `src/ui.rs`
-  - **Scope:** Move `sparse_color`, `mid_color`, `dense_color`, and `rim_color` into `WaterParams` uniforms. Add a `WaterPalette` enum with curated presets (e.g., *Ocean*, *Lava*, *Slime*, *Ink*, *Sunset*) and a UI button (or hotkey) to cycle them.
+- [x] **2A: Water color presets**
+  - **Files:** `assets/shaders/water.wgsl`, `src/water.rs`, `src/ui.rs`
+  - **Scope:** Move `sparse_color`, `mid_color`, `dense_color`, and `rim_color` into `WaterParams` uniforms. Add a `WaterPalette` enum with curated presets (*Ocean*, *Lava*, *Slime*, *Ink*, *Sunset*) and UI cycle controls.
   - **Acceptance:** Cycling presets immediately updates the water shader's depth gradient and rim highlight.
-- [ ] **2B: Collapsible shader & color control panel**
+- [x] **2B: Collapsible shader & color control panel**
   - **Files:** `src/ui.rs`, `src/water.rs`, `assets/shaders/water.wgsl`
-  - **Scope:** Add a toggleable control panel (e.g., `Tab` or `Settings` button) with `-`/`+` stepper buttons for `threshold`, `foam_width`, shimmer intensity, and preset/custom color tinting.
+  - **Scope:** Add a toggleable control panel (`Tab` or `Shader (Tab)` button) with `-`/`+` stepper buttons for `threshold`, `foam_width`, `shimmer`, palette selection, and `Reset Defaults`, plus cleaned-up translucent glass HUD/toolbar cards.
   - **Acceptance:** Opening the panel and adjusting controls updates `WaterParams` live without blocking simulation input.
 
 ---
 
-## Phase 3 — Particle Visuals (Gradients & Size)
+## Phase 3 — Particle Visuals (Gradients & Size) (Done)
 
-- [ ] **3A: Nice color gradients in Particle mode**
+- [x] **3A: Nice color gradients in Particle mode**
   - **Files:** `src/sim.rs` (or `src/main.rs`), `src/ui.rs`
   - **Scope:** Replace the random per-unit `base_hue` rainbow with cohesive color gradients when `water_mode == false` — e.g., selectable gradient modes (*Speed*, *Depth/Height*, *Density*, *Sunset/Ocean/Neon* ramps) using smooth `Vec3`/color interpolation.
   - **Acceptance:** Toggling `W` to Particles shows smooth, cohesive color gradients that respond to particle motion or position.
-- [ ] **3B: Dynamic particle size**
+- [x] **3B: Dynamic particle size**
   - **Files:** `src/sim.rs` (or `src/main.rs`), `src/ui.rs`
   - **Scope:** Move `UNIT_RADIUS` into `SimState` (e.g., `2.5`–`10.0`). When changed via UI `-`/`+` (or hotkeys), update each `Unit` sprite's `custom_size` (both circle and water blob scale), collision `min_dist = unit_radius * 2.0`, and ensure `SpatialGrid` cell size / neighbor search covers `min_dist`.
   - **Acceptance:** Increasing/decreasing particle size visibly resizes particles and updates collision spacing and water metaball thickness cleanly.
