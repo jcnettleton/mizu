@@ -10,7 +10,10 @@
 - **Engine:** Bevy `0.18` (2D, `FixedUpdate` at `120 Hz`)
 - **Package:** `mizu` (`Cargo.toml`)
 - **Core Files:**
-  - `src/main.rs` — Simulation state (`SimState`), spatial hash grid (`SpatialGrid`), particle physics & collisions, offscreen metaball density pass (`RenderLayers::layer(1)` -> `1280x720` render target), UI controls, and HUD.
+  - `src/main.rs` — App entry point, plugin/system wiring, and window configuration.
+  - `src/sim.rs` — Simulation state (`SimState`), spatial hash grid (`SpatialGrid`), particle physics & collisions, and unit spawning.
+  - `src/water.rs` — Offscreen metaball density pass (`RenderLayers::layer(1)` -> `1280x720` render target), `WaterMaterial` / `WaterParams`, and procedural textures.
+  - `src/ui.rs` — On-screen HUD, top-right control bar, and input handling.
   - `assets/shaders/water.wgsl` — 9-tap smoothing kernel, density thresholding, depth color ramp (`sparse` / `mid` / `dense`), surface-tension rim/foam, and organic shimmer.
 - **Current Controls:**
   - `Left/Right-Drag`: Repel / Attract particles
@@ -31,21 +34,21 @@
 
 ---
 
-## Phase 1 — Bugfix & Lightweight Module Split
+## Phase 1 — Bugfix & Lightweight Module Split (Done)
 
-- [ ] **1A: Fix broken mouse-scroll force scaling**
-  - **Files:** `src/main.rs`
-  - **Scope:** In `handle_input`, `AccumulatedMouseScroll` can report pixel-based deltas (`MouseScrollUnit::Pixel`, e.g., `15`–`120` per notch on Wayland/trackpads) rather than `1.0` per notch, causing `scroll.delta.y * 150.0` to immediately clamp to `300` or `4500`. Handle `MouseScrollUnit::Line` vs `MouseScrollUnit::Pixel` (or read `MouseWheel` events with unit-aware scaling and per-notch clamping).
-  - **Acceptance:** Scrolling up/down smoothly steps `Force` by ~`100`–`300` per notch instead of jumping straight to min/max.
-- [ ] **1B: Extract simulation & grid (`src/sim.rs`)**
+- [x] **1A: Fix broken mouse-scroll force scaling**
+  - **Files:** `src/ui.rs`
+  - **Scope:** In `handle_input`, `AccumulatedMouseScroll` can report pixel-based deltas (`MouseScrollUnit::Pixel`, e.g., `15`–`120` per notch on Wayland/trackpads) rather than `1.0` per notch, causing `scroll.delta.y * 150.0` to immediately clamp to `300` or `4500`. Handle `MouseScrollUnit::Line` vs `MouseScrollUnit::Pixel` with unit-aware scaling and per-frame clamping.
+  - **Acceptance:** Scrolling up/down smoothly steps `Force` instead of jumping straight to min/max.
+- [x] **1B: Extract simulation & grid (`src/sim.rs`)**
   - **Files:** `src/sim.rs`, `src/main.rs`
   - **Scope:** Move `SimState`, `SpatialGrid`, `Unit`, `spawn_units`, and `step_simulation` into `src/sim.rs`.
   - **Acceptance:** `cargo check` and `cargo run` behave identically.
-- [ ] **1C: Extract water material & rendering (`src/water.rs`)**
+- [x] **1C: Extract water material & rendering (`src/water.rs`)**
   - **Files:** `src/water.rs`, `src/main.rs`
   - **Scope:** Move `WaterParams`, `WaterMaterial`, `WaterQuad`, `OffscreenCamera`, `create_circle_image`, `create_blob_image`, and `update_water_time` into `src/water.rs`.
   - **Acceptance:** `cargo check` and water/particle toggle (`W`) works.
-- [ ] **1D: Extract UI & input (`src/ui.rs`)**
+- [x] **1D: Extract UI & input (`src/ui.rs`)**
   - **Files:** `src/ui.rs`, `src/main.rs`
   - **Scope:** Move HUD, top-right control bar, button marker components, `handle_input`, and `update_hud` into `src/ui.rs`.
   - **Acceptance:** `cargo check` and all UI buttons/keybinds work.
