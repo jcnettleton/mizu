@@ -10,7 +10,7 @@ use std::f32::consts::TAU;
 use crate::sim::{
     ARENA_HALF_H, ARENA_HALF_W, DEFAULT_UNIT_RADIUS, MAX_UNIT_RADIUS, MIN_UNIT_RADIUS,
     ParticleColorRamp, ParticleGradientMode, SimState, SpatialGrid, Unit, grid_cell_size,
-    particle_color, spawn_units,
+    particle_color, particle_color_with, spawn_units,
 };
 use crate::water::{
     OffscreenCamera, UnitAssets, WaterMaterial, WaterPalette, WaterParams, WaterQuad,
@@ -821,25 +821,14 @@ pub fn handle_input(
             transform.translation.x = x;
             transform.translation.y = y;
             if !water_mode {
-                if color_ramp == ParticleColorRamp::Rainbow {
-                    let t = match gradient_mode {
-                        ParticleGradientMode::Speed => (unit.vel.length() / 220.0).clamp(0.0, 1.0),
-                        ParticleGradientMode::Height => {
-                            ((unit.pos.y + ARENA_HALF_H) / (2.0 * ARENA_HALF_H)).clamp(0.0, 1.0)
-                        }
-                        ParticleGradientMode::Density => 0.0,
-                    };
-                    sprite.color = Color::hsl(unit.base_hue, 0.85, 0.48 + t * 0.25);
-                } else {
-                    let t = match gradient_mode {
-                        ParticleGradientMode::Speed => (unit.vel.length() / 280.0).clamp(0.0, 1.0),
-                        ParticleGradientMode::Height => {
-                            ((unit.pos.y + ARENA_HALF_H) / (2.0 * ARENA_HALF_H)).clamp(0.0, 1.0)
-                        }
-                        ParticleGradientMode::Density => 0.0,
-                    };
-                    sprite.color = color_ramp.sample(t);
-                }
+                sprite.color = particle_color_with(
+                    unit.pos,
+                    unit.vel,
+                    0.0,
+                    unit.base_hue,
+                    gradient_mode,
+                    color_ramp,
+                );
             }
         }
     }

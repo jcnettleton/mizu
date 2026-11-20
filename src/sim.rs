@@ -21,16 +21,26 @@ pub enum ParticleGradientMode {
     Speed,
     Height,
     Density,
+    Radial,
+    Flow,
 }
 
 impl ParticleGradientMode {
-    pub const ALL: [Self; 3] = [Self::Speed, Self::Height, Self::Density];
+    pub const ALL: [Self; 5] = [
+        Self::Speed,
+        Self::Height,
+        Self::Density,
+        Self::Radial,
+        Self::Flow,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Speed => "Speed",
             Self::Height => "Height",
             Self::Density => "Density",
+            Self::Radial => "Radial",
+            Self::Flow => "Flow",
         }
     }
 
@@ -49,31 +59,49 @@ impl ParticleGradientMode {
 pub enum ParticleColorRamp {
     #[default]
     Rainbow,
+    Pastel,
+    Iridescent,
     Ocean,
     Sunset,
     Neon,
     Ember,
     Aurora,
+    Biolume,
+    Plasma,
+    Solar,
+    Cyber,
 }
 
 impl ParticleColorRamp {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 12] = [
         Self::Rainbow,
+        Self::Pastel,
+        Self::Iridescent,
         Self::Ocean,
         Self::Sunset,
         Self::Neon,
         Self::Ember,
         Self::Aurora,
+        Self::Biolume,
+        Self::Plasma,
+        Self::Solar,
+        Self::Cyber,
     ];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Rainbow => "Rainbow",
+            Self::Pastel => "Pastel",
+            Self::Iridescent => "Iridescent",
             Self::Ocean => "Ocean",
             Self::Sunset => "Sunset",
             Self::Neon => "Neon",
             Self::Ember => "Ember",
             Self::Aurora => "Aurora",
+            Self::Biolume => "Biolume",
+            Self::Plasma => "Plasma",
+            Self::Solar => "Solar",
+            Self::Cyber => "Cyber",
         }
     }
 
@@ -89,7 +117,7 @@ impl ParticleColorRamp {
 
     pub fn stops(self) -> (Vec3, Vec3, Vec3) {
         match self {
-            Self::Rainbow | Self::Ocean => (
+            Self::Rainbow | Self::Pastel | Self::Iridescent | Self::Ocean => (
                 Vec3::new(0.05, 0.16, 0.45),
                 Vec3::new(0.10, 0.68, 0.90),
                 Vec3::new(0.78, 0.98, 1.00),
@@ -113,6 +141,26 @@ impl ParticleColorRamp {
                 Vec3::new(0.04, 0.18, 0.28),
                 Vec3::new(0.12, 0.82, 0.48),
                 Vec3::new(0.76, 0.44, 0.98),
+            ),
+            Self::Biolume => (
+                Vec3::new(0.02, 0.04, 0.16),
+                Vec3::new(0.04, 0.52, 0.78),
+                Vec3::new(0.38, 1.00, 0.86),
+            ),
+            Self::Plasma => (
+                Vec3::new(0.12, 0.02, 0.34),
+                Vec3::new(0.86, 0.12, 0.54),
+                Vec3::new(1.00, 0.92, 0.72),
+            ),
+            Self::Solar => (
+                Vec3::new(0.10, 0.06, 0.08),
+                Vec3::new(0.88, 0.56, 0.12),
+                Vec3::new(1.00, 0.98, 0.82),
+            ),
+            Self::Cyber => (
+                Vec3::new(0.05, 0.08, 0.14),
+                Vec3::new(0.08, 0.88, 0.42),
+                Vec3::new(0.82, 1.00, 0.36),
             ),
         }
     }
@@ -184,6 +232,50 @@ impl SimState {
 }
 
 #[inline]
+pub fn particle_color_with(
+    pos: Vec2,
+    vel: Vec2,
+    density: f32,
+    base_hue: f32,
+    gradient_mode: ParticleGradientMode,
+    color_ramp: ParticleColorRamp,
+) -> Color {
+    let t = match gradient_mode {
+        ParticleGradientMode::Speed => {
+            let max_speed = if matches!(
+                color_ramp,
+                ParticleColorRamp::Rainbow
+                    | ParticleColorRamp::Pastel
+                    | ParticleColorRamp::Iridescent
+            ) {
+                220.0
+            } else {
+                280.0
+            };
+            (vel.length() / max_speed).clamp(0.0, 1.0)
+        }
+        ParticleGradientMode::Height => {
+            ((pos.y + ARENA_HALF_H) / (2.0 * ARENA_HALF_H)).clamp(0.0, 1.0)
+        }
+        ParticleGradientMode::Density => density.clamp(0.0, 1.0),
+        ParticleGradientMode::Radial => {
+            let max_r = ARENA_HALF_W.hypot(ARENA_HALF_H) * 0.85;
+            (pos.length() / max_r).clamp(0.0, 1.0)
+        }
+        ParticleGradientMode::Flow => (vel.y.atan2(vel.x) / TAU + 0.5).clamp(0.0, 1.0),
+    };
+
+    match color_ramp {
+        ParticleColorRamp::Rainbow => Color::hsl(base_hue, 0.85, 0.48 + t * 0.25),
+        ParticleColorRamp::Pastel => Color::hsl(base_hue, 0.65, 0.66 + t * 0.18),
+        ParticleColorRamp::Iridescent => {
+            Color::hsl((base_hue + t * 140.0) % 360.0, 0.90, 0.48 + t * 0.24)
+        }
+        _ => color_ramp.sample(t),
+    }
+}
+
+#[inline]
 pub fn particle_color(
     pos: Vec2,
     vel: Vec2,
@@ -191,25 +283,14 @@ pub fn particle_color(
     base_hue: f32,
     state: &SimState,
 ) -> Color {
-    if state.color_ramp == ParticleColorRamp::Rainbow {
-        let t = match state.gradient_mode {
-            ParticleGradientMode::Speed => (vel.length() / 220.0).clamp(0.0, 1.0),
-            ParticleGradientMode::Height => {
-                ((pos.y + ARENA_HALF_H) / (2.0 * ARENA_HALF_H)).clamp(0.0, 1.0)
-            }
-            ParticleGradientMode::Density => density.clamp(0.0, 1.0),
-        };
-        return Color::hsl(base_hue, 0.85, 0.48 + t * 0.25);
-    }
-
-    let t = match state.gradient_mode {
-        ParticleGradientMode::Speed => (vel.length() / 280.0).clamp(0.0, 1.0),
-        ParticleGradientMode::Height => {
-            ((pos.y + ARENA_HALF_H) / (2.0 * ARENA_HALF_H)).clamp(0.0, 1.0)
-        }
-        ParticleGradientMode::Density => density.clamp(0.0, 1.0),
-    };
-    state.color_ramp.sample(t)
+    particle_color_with(
+        pos,
+        vel,
+        density,
+        base_hue,
+        state.gradient_mode,
+        state.color_ramp,
+    )
 }
 
 #[derive(Component)]
