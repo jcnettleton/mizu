@@ -8,6 +8,84 @@ pub const ARENA_HALF_H: f32 = 340.0;
 pub const DEFAULT_UNIT_RADIUS: f32 = 4.0;
 pub const MIN_UNIT_RADIUS: f32 = 2.5;
 pub const MAX_UNIT_RADIUS: f32 = 10.0;
+
+pub const DEFAULT_GRAVITY_STRENGTH: f32 = 520.0;
+pub const MIN_GRAVITY_STRENGTH: f32 = 100.0;
+pub const MAX_GRAVITY_STRENGTH: f32 = 1500.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GravityDirection {
+    #[default]
+    Down,
+    DownRight,
+    Right,
+    UpRight,
+    Up,
+    UpLeft,
+    Left,
+    DownLeft,
+    Center,
+}
+
+impl GravityDirection {
+    pub const ALL: [Self; 9] = [
+        Self::Down,
+        Self::DownRight,
+        Self::Right,
+        Self::UpRight,
+        Self::Up,
+        Self::UpLeft,
+        Self::Left,
+        Self::DownLeft,
+        Self::Center,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Down => "Down",
+            Self::DownRight => "SE",
+            Self::Right => "Right",
+            Self::UpRight => "NE",
+            Self::Up => "Up",
+            Self::UpLeft => "NW",
+            Self::Left => "Left",
+            Self::DownLeft => "SW",
+            Self::Center => "Center",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        let idx = Self::ALL.iter().position(|&d| d == self).unwrap_or(0);
+        Self::ALL[(idx + 1) % Self::ALL.len()]
+    }
+
+    pub fn prev(self) -> Self {
+        let idx = Self::ALL.iter().position(|&d| d == self).unwrap_or(0);
+        Self::ALL[(idx + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
+
+    #[inline]
+    pub fn dir_at(self, pos: Vec2) -> Vec2 {
+        const DIAG: f32 = std::f32::consts::FRAC_1_SQRT_2;
+        match self {
+            Self::Down => Vec2::new(0.0, -1.0),
+            Self::DownRight => Vec2::new(DIAG, -DIAG),
+            Self::Right => Vec2::new(1.0, 0.0),
+            Self::UpRight => Vec2::new(DIAG, DIAG),
+            Self::Up => Vec2::new(0.0, 1.0),
+            Self::UpLeft => Vec2::new(-DIAG, DIAG),
+            Self::Left => Vec2::new(-1.0, 0.0),
+            Self::DownLeft => Vec2::new(-DIAG, -DIAG),
+            Self::Center => {
+                if pos.length_squared() > 1.0 {
+                    -pos.normalize()
+                } else {
+                    Vec2::ZERO
+                }
+            }
+        }
+    }
+}
 pub const INITIAL_UNITS: usize = 4000;
 
 #[inline]
@@ -186,7 +264,9 @@ impl ParticleColorRamp {
 pub struct SimState {
     pub paused: bool,
     pub water_mode: bool,
-    pub gravity_on: bool,
+    pub gravity_enabled: bool,
+    pub gravity_strength: f32,
+    pub gravity_direction: GravityDirection,
     pub force_strength: f32,
     pub unit_radius: f32,
     pub gradient_mode: ParticleGradientMode,
@@ -200,7 +280,9 @@ impl Default for SimState {
         Self {
             paused: false,
             water_mode: true,
-            gravity_on: false,
+            gravity_enabled: false,
+            gravity_strength: DEFAULT_GRAVITY_STRENGTH,
+            gravity_direction: GravityDirection::default(),
             force_strength: 900.0,
             unit_radius: DEFAULT_UNIT_RADIUS,
             gradient_mode: ParticleGradientMode::default(),
@@ -470,10 +552,18 @@ pub fn step_simulation(
     let min_y = -ARENA_HALF_H + radius;
     let max_y = ARENA_HALF_H - radius;
 
+    let gravity_enabled = state.gravity_enabled;
+    let gravity_strength = state.gravity_strength;
+    let gravity_direction = state.gravity_direction;
+
     for (pos, vel) in &mut data {
-        if state.gravity_on {
-            vel.y -= 520.0 * dt;
-        }
+        let g_dir = if gravity_enabled {
+            let dir = gravity_direction.dir_at(*pos);
+            *vel += dir * gravity_strength * dt;
+            dir
+        } else {
+            Vec2::ZERO
+        };
 
         if let Some((target, dir)) = cursor_force {
             let delta = target - *pos;
@@ -486,34 +576,51 @@ pub fn step_simulation(
         }
 
         let speed = vel.length();
-        let base_max: f32 = if state.gravity_on { 460.0 } else { 260.0 };
+        let base_max: f32 = if gravity_enabled {
+            460.0_f32.max(gravity_strength * 0.9)
+        } else {
+            260.0
+        };
         let max_speed = base_max.max(state.force_strength * 0.45);
         if speed > max_speed {
             *vel *= max_speed / speed;
-        } else if !state.gravity_on && speed > 1.0 && speed < 50.0 {
+        } else if !gravity_enabled && speed > 1.0 && speed < 50.0 {
             *vel *= (speed + 40.0 * dt) / speed;
         }
 
         *pos += *vel * dt;
 
-        let wall_bounce = if state.gravity_on { 0.45 } else { 1.0 };
+        let default_bounce = if gravity_enabled { 0.45 } else { 1.0 };
         if pos.x < min_x {
             pos.x = min_x;
-            vel.x = vel.x.abs() * wall_bounce;
+            let is_floor = gravity_enabled && g_dir.x < -0.25;
+            vel.x = vel.x.abs() * if is_floor { 0.30 } else { default_bounce };
+            if is_floor {
+                vel.y *= 0.985;
+            }
         } else if pos.x > max_x {
             pos.x = max_x;
-            vel.x = -vel.x.abs() * wall_bounce;
+            let is_floor = gravity_enabled && g_dir.x > 0.25;
+            vel.x = -vel.x.abs() * if is_floor { 0.30 } else { default_bounce };
+            if is_floor {
+                vel.y *= 0.985;
+            }
         }
 
         if pos.y < min_y {
             pos.y = min_y;
-            vel.y = vel.y.abs() * if state.gravity_on { 0.30 } else { 1.0 };
-            if state.gravity_on {
+            let is_floor = gravity_enabled && g_dir.y < -0.25;
+            vel.y = vel.y.abs() * if is_floor { 0.30 } else { default_bounce };
+            if is_floor {
                 vel.x *= 0.985;
             }
         } else if pos.y > max_y {
             pos.y = max_y;
-            vel.y = -vel.y.abs() * wall_bounce;
+            let is_floor = gravity_enabled && g_dir.y > 0.25;
+            vel.y = -vel.y.abs() * if is_floor { 0.30 } else { default_bounce };
+            if is_floor {
+                vel.x *= 0.985;
+            }
         }
     }
 

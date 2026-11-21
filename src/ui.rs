@@ -8,7 +8,8 @@ use bevy::{
 use std::f32::consts::TAU;
 
 use crate::sim::{
-    ARENA_HALF_H, ARENA_HALF_W, DEFAULT_UNIT_RADIUS, MAX_UNIT_RADIUS, MIN_UNIT_RADIUS,
+    ARENA_HALF_H, ARENA_HALF_W, DEFAULT_GRAVITY_STRENGTH, DEFAULT_UNIT_RADIUS, GravityDirection,
+    MAX_GRAVITY_STRENGTH, MAX_UNIT_RADIUS, MIN_GRAVITY_STRENGTH, MIN_UNIT_RADIUS,
     ParticleColorRamp, ParticleGradientMode, SimState, SpatialGrid, Unit, grid_cell_size,
     particle_color, particle_color_with, spawn_units,
 };
@@ -72,6 +73,10 @@ pub enum UiAction {
     ForceDown,
     ForceUp,
     ToggleGravity,
+    GravityStrengthDown,
+    GravityStrengthUp,
+    GravityDirPrev,
+    GravityDirNext,
     ToggleShaderPanel,
     PalettePrev,
     PaletteNext,
@@ -95,6 +100,8 @@ pub enum UiAction {
 pub enum UiLabel {
     Force,
     Gravity,
+    GravityStrength,
+    GravityDir,
     ShaderPanelBtn,
     Palette,
     Threshold,
@@ -434,6 +441,44 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                     ">",
                 );
 
+                panel.spawn((
+                    Text::new("GRAVITY"),
+                    TextFont {
+                        font: libron.clone(),
+                        font_size: 13.0,
+                        ..default()
+                    },
+                    TextColor(TEXT_MUTED),
+                    Node {
+                        margin: UiRect::top(Val::Px(4.0)),
+                        ..default()
+                    },
+                ));
+
+                spawn_stepper_row(
+                    panel,
+                    "Strength",
+                    "520",
+                    libron.clone(),
+                    UiAction::GravityStrengthDown,
+                    UiAction::GravityStrengthUp,
+                    UiLabel::GravityStrength,
+                    "-",
+                    "+",
+                );
+
+                spawn_stepper_row(
+                    panel,
+                    "Direction",
+                    "Down",
+                    libron.clone(),
+                    UiAction::GravityDirPrev,
+                    UiAction::GravityDirNext,
+                    UiLabel::GravityDir,
+                    "<",
+                    ">",
+                );
+
                 panel
                     .spawn(Node {
                         width: Val::Percent(100.0),
@@ -514,6 +559,7 @@ pub fn handle_input(
     let mut shader_dirty = false;
     let mut size_dirty = false;
     let mut colors_dirty = false;
+    let mut gravity_dirty = false;
     let mut font_toggled = false;
 
     for (interaction, action, mut bg, mut border) in &mut ui.buttons {
@@ -523,6 +569,24 @@ pub fn handle_input(
                 UiAction::ForceDown => force_delta -= 300.0,
                 UiAction::ForceUp => force_delta += 300.0,
                 UiAction::ToggleGravity => gravity_toggled = true,
+                UiAction::GravityStrengthDown => {
+                    state.gravity_strength = (state.gravity_strength - 100.0)
+                        .clamp(MIN_GRAVITY_STRENGTH, MAX_GRAVITY_STRENGTH);
+                    gravity_dirty = true;
+                }
+                UiAction::GravityStrengthUp => {
+                    state.gravity_strength = (state.gravity_strength + 100.0)
+                        .clamp(MIN_GRAVITY_STRENGTH, MAX_GRAVITY_STRENGTH);
+                    gravity_dirty = true;
+                }
+                UiAction::GravityDirPrev => {
+                    state.gravity_direction = state.gravity_direction.prev();
+                    gravity_dirty = true;
+                }
+                UiAction::GravityDirNext => {
+                    state.gravity_direction = state.gravity_direction.next();
+                    gravity_dirty = true;
+                }
                 UiAction::ToggleShaderPanel => panel_toggled = true,
                 UiAction::PalettePrev => {
                     ui_state.palette = ui_state.palette.prev();
@@ -610,16 +674,19 @@ pub fn handle_input(
                     state.unit_radius = DEFAULT_UNIT_RADIUS;
                     state.gradient_mode = ParticleGradientMode::default();
                     state.color_ramp = ParticleColorRamp::default();
+                    state.gravity_strength = DEFAULT_GRAVITY_STRENGTH;
+                    state.gravity_direction = GravityDirection::default();
                     shader_dirty = true;
                     size_dirty = true;
                     colors_dirty = true;
+                    gravity_dirty = true;
                 }
             }
         }
 
         let is_active = matches!(
             action,
-            UiAction::ToggleGravity if state.gravity_on
+            UiAction::ToggleGravity if state.gravity_enabled
         ) || matches!(
             action,
             UiAction::ToggleShaderPanel if ui_state.shader_panel_open
@@ -661,7 +728,7 @@ pub fn handle_input(
     }
 
     if gravity_toggled {
-        state.gravity_on = !state.gravity_on;
+        state.gravity_enabled = !state.gravity_enabled;
     }
 
     if font_toggled {
@@ -690,6 +757,7 @@ pub fn handle_input(
 
     if force_delta != 0.0
         || gravity_toggled
+        || gravity_dirty
         || shader_dirty
         || size_dirty
         || colors_dirty
@@ -707,11 +775,17 @@ pub fn handle_input(
                     **text = format!("Force: {:.0}", state.force_strength);
                 }
                 UiLabel::Gravity => {
-                    **text = if state.gravity_on {
+                    **text = if state.gravity_enabled {
                         "Gravity (G): ON".to_string()
                     } else {
                         "Gravity (G): OFF".to_string()
                     };
+                }
+                UiLabel::GravityStrength => {
+                    **text = format!("{:.0}", state.gravity_strength);
+                }
+                UiLabel::GravityDir => {
+                    **text = state.gravity_direction.name().to_string();
                 }
                 UiLabel::ShaderPanelBtn => {
                     **text = if ui_state.shader_panel_open {

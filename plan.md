@@ -81,9 +81,9 @@
 
 ---
 
-## Phase 4 — Gravity Direction & Strength
+## Phase 4 — Gravity Direction & Strength (Done)
 
-- [ ] **4A: Configurable gravity vector (direction + strength)**
+- [x] **4A: Configurable gravity vector (direction + strength)**
   - **Files:** `src/sim.rs` (or `src/main.rs`), `src/ui.rs`
   - **Scope:** Replace `gravity_on: bool` + hardcoded `-520.0` with `gravity_enabled: bool`, `gravity_strength: f32`, and `gravity_angle: f32` (or `Vec2` direction). Add UI controls for strength (`-`/`+`) and direction (e.g., cardinal presets `↓ ↑ ← →` or rotating angle step, plus optional radial/center gravity). Update wall friction/bounce logic to work with any gravity direction instead of assuming `pos.y < min_y` is always the floor.
   - **Acceptance:** Gravity can be pointed in any direction and scaled in strength, with particles settling naturally against whichever wall is "down".
@@ -96,6 +96,53 @@
   - **Files:** `src/sim.rs` (or `src/main.rs`), `src/ui.rs`
   - **Scope:** Add a `ContainerShape` enum (`Rectangle`, `Circle`, `Hexagon`, `Triangle`) in `SimState` with a UI cycle button. Replace the AABB wall clamping in `step_simulation` with shape-specific boundary distance + normal reflection (e.g., radial clamp for `Circle`, half-plane / polygon edge SDF for `Hexagon` and `Triangle`). Update the background arena border visual (using `Mesh2d` or gizmos) to match the active container shape.
   - **Acceptance:** Cycling container shapes updates both the rendered arena boundary and particle/water collisions smoothly.
+
+---
+
+## Phase 6 — Visuals, Liquid Mode & Naming Polish
+
+- [ ] **6A: Rename Water Shader & Shader Tab to Liquid Mode & Visuals**
+  - **Files:** `src/ui.rs`, `src/water.rs`, `src/sim.rs`
+  - **Scope:** Rename user-facing `"Water"` / `"Water Shader"` labels to `"Liquid"` / `"Liquid Mode"` (e.g., HUD mode indicator and view toggle), and rename the `"Shader (Tab)"` button and panel header to `"Visuals (Tab)"` (or `"Style (Tab)"`) so it reflects that the panel controls both liquid effects and particle visuals.
+  - **Acceptance:** All UI labels, HUD hints, and tab buttons use `"Liquid"` and `"Visuals (Tab)"` consistently.
+- [ ] **6B: Lower minimum particle size to `1.5` & add gradient reverse toggle**
+  - **Files:** `src/sim.rs`, `src/ui.rs`
+  - **Scope:** Lower `MIN_UNIT_RADIUS` from `2.5` to `1.5` (and verify `grid_cell_size` and sprite sizing work cleanly at `1.5`). Add a `gradient_reversed: bool` field to `SimState` with a `Reverse` / `Invert` toggle button in the Visuals panel that flips `t` (`1.0 - t`) in `particle_gradient_color` so every gradient supports both dark-to-light and light-to-dark.
+  - **Acceptance:** Particle size can be stepped down to `1.5`, and toggling gradient reverse immediately flips the color ramp direction in Particle mode.
+- [ ] **6C: Boost Liquid Mode visual impact & parameter responsiveness**
+  - **Files:** `assets/shaders/water.wgsl`, `src/water.rs`, `src/ui.rs`
+  - **Scope:** Tune `water.wgsl` and `WaterParams` defaults/ranges/step sizes so adjusting `threshold`, `foam_width`, and `shimmer` produces an unmistakable, dramatic visual change (stronger surface-tension rim/foam contrast, more visible wave/shimmer distortion, and wider effective parameter ranges).
+  - **Acceptance:** Stepping `Threshold`, `Foam`, or `Shimmer` in Liquid mode produces clear, dramatic visual differences on screen.
+
+---
+
+## Phase 7 — Motion Modes & Interactive Spawning
+
+- [ ] **7A: Motion modes (Lava Lamp & physics presets)**
+  - **Files:** `src/sim.rs`, `src/ui.rs`
+  - **Scope:** Add a `MotionMode` enum to `SimState` (e.g., `Fluid` for standard physics, `LavaLamp` for slow thermal buoyancy/convection where bottom-heated particles rise in cohesive blobs and cool particles sink, plus optional `Swirl`/`ZeroG` drift). Add a UI cycle control in the Visuals/Simulation panel.
+  - **Acceptance:** Switching to `LavaLamp` causes particles to rise and sink in slow, organic thermal plumes instead of settling flat on the floor.
+- [ ] **7B: Click-to-Add / Remove cursor mode**
+  - **Files:** `src/ui.rs`, `src/sim.rs`
+  - **Scope:** Add a `CursorMode` enum (`Force` for Repel/Attract vs `Spawn` for Add/Remove) toggled via a UI button and hotkey (e.g., `C`). In `Spawn` mode, Left-Click/Drag spawns new particles at the cursor (with slight jitter) and Right-Click/Drag removes particles within a cursor brush radius.
+  - **Acceptance:** Switching to Add/Remove mode lets the user paint new particles with left-drag and erase particles with right-drag.
+- [ ] **7C: FPS-based particle limit & low-FPS warning**
+  - **Files:** `src/main.rs`, `src/sim.rs`, `src/ui.rs`
+  - **Scope:** Track smoothed FPS (via `FrameTimeDiagnosticsPlugin` or `Time::delta_secs()`). When FPS drops below `10`, block adding new particles (both from `+`/`Up` hotkeys and from Click-to-Add) and display a centered warning banner on screen (e.g., `"Low FPS (< 10) — particle spawning paused"`). Allow removing particles normally so the user can recover.
+  - **Acceptance:** Spawning enough particles to drop FPS below `10` prevents further additions and shows the centered warning until FPS rises back above `10`.
+
+---
+
+## Phase 8 — Pause Menu, Display Settings & Fullscreen UI Toggle
+
+- [ ] **8A: Hide UI / Zen full-screen effect mode**
+  - **Files:** `src/ui.rs`
+  - **Scope:** Add a `ui_hidden: bool` state toggled by `H` or a top-bar button. When hidden, set the HUD, toolbar, and control panels to `Display::None` so the simulation fills the screen cleanly while keeping mouse/keyboard controls active (optionally showing a brief fade-out hint or restoring on `H` / `Esc`).
+  - **Acceptance:** Pressing `H` hides all UI elements for an unobstructed full-screen view; pressing `H` again restores them.
+- [ ] **8B: Pause menu with real display settings**
+  - **Files:** `src/ui.rs`, `src/main.rs`, `src/water.rs`
+  - **Scope:** Add an `Esc`-triggered Pause Menu modal overlay that pauses the simulation and provides real `Window` display controls: Window Mode (`Windowed`, `Borderless Fullscreen`, `Fullscreen`) and aspect-ratio / resolution presets (`16:9`, `21:9 Widescreen`, `16:10`, etc.). Update camera projection/viewport and offscreen render target handling as needed so widescreen and fullscreen resize cleanly without stretching.
+  - **Acceptance:** Pressing `Esc` opens the pause menu, and changing between Windowed, Borderless Fullscreen, and Widescreen presets updates the actual window and renders the simulation cleanly.
 
 ---
 
