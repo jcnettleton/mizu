@@ -1,6 +1,6 @@
 use bevy::{
     asset::RenderAssetUsages,
-    camera::{visibility::RenderLayers, RenderTarget},
+    camera::{ScalingMode, visibility::RenderLayers, RenderTarget},
     prelude::*,
     reflect::TypePath,
     render::render_resource::{
@@ -246,8 +246,18 @@ pub fn setup_scene(
     mut water_materials: ResMut<Assets<WaterMaterial>>,
     mut state: ResMut<SimState>,
 ) {
-    // Main camera (Layer 0)
-    commands.spawn((Camera2d, RenderLayers::layer(0)));
+    // Main camera (Layer 0) — AutoMin keeps 1:1 aspect ratio across 16:9, 21:9, 16:10, and fullscreen
+    commands.spawn((
+        Camera2d,
+        Projection::Orthographic(OrthographicProjection {
+            scaling_mode: ScalingMode::AutoMin {
+                min_width: RT_WIDTH as f32,
+                min_height: RT_HEIGHT as f32,
+            },
+            ..OrthographicProjection::default_2d()
+        }),
+        RenderLayers::layer(0),
+    ));
 
     // Offscreen render target for metaball density pass
     let mut rt_image = Image::new_fill(

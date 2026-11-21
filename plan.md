@@ -133,13 +133,13 @@
 
 ---
 
-## Phase 8 — Pause Menu, Display Settings & Fullscreen UI Toggle
+## Phase 8 — Pause Menu, Display Settings & Fullscreen UI Toggle (Done)
 
-- [ ] **8A: Hide UI / Zen full-screen effect mode**
+- [x] **8A: Hide UI / Zen full-screen effect mode**
   - **Files:** `src/ui.rs`
   - **Scope:** Add a `ui_hidden: bool` state toggled by `H` or a top-bar button. When hidden, set the HUD, toolbar, and control panels to `Display::None` so the simulation fills the screen cleanly while keeping mouse/keyboard controls active (optionally showing a brief fade-out hint or restoring on `H` / `Esc`).
   - **Acceptance:** Pressing `H` hides all UI elements for an unobstructed full-screen view; pressing `H` again restores them.
-- [ ] **8B: Pause menu with real display settings**
+- [x] **8B: Pause menu with real display settings**
   - **Files:** `src/ui.rs`, `src/main.rs`, `src/water.rs`
   - **Scope:** Add an `Esc`-triggered Pause Menu modal overlay that pauses the simulation and provides real `Window` display controls: Window Mode (`Windowed`, `Borderless Fullscreen`, `Fullscreen`) and aspect-ratio / resolution presets (`16:9`, `21:9 Widescreen`, `16:10`, etc.). Update camera projection/viewport and offscreen render target handling as needed so widescreen and fullscreen resize cleanly without stretching.
   - **Acceptance:** Pressing `Esc` opens the pause menu, and changing between Windowed, Borderless Fullscreen, and Widescreen presets updates the actual window and renders the simulation cleanly.

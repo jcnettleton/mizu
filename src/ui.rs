@@ -4,7 +4,7 @@ use bevy::{
     ecs::system::SystemParam,
     input::mouse::{AccumulatedMouseScroll, MouseScrollUnit},
     prelude::*,
-    window::PrimaryWindow,
+    window::{MonitorSelection, PrimaryWindow, VideoModeSelection, WindowMode},
 };
 use std::f32::consts::TAU;
 
@@ -53,6 +53,100 @@ impl FontChoice {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WindowModeChoice {
+    #[default]
+    Windowed,
+    Borderless,
+    Fullscreen,
+}
+
+impl WindowModeChoice {
+    pub const ALL: [Self; 3] = [Self::Windowed, Self::Borderless, Self::Fullscreen];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Windowed => "Windowed",
+            Self::Borderless => "Borderless",
+            Self::Fullscreen => "Fullscreen",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        let idx = Self::ALL.iter().position(|&m| m == self).unwrap_or(0);
+        Self::ALL[(idx + 1) % Self::ALL.len()]
+    }
+
+    pub fn prev(self) -> Self {
+        let idx = Self::ALL.iter().position(|&m| m == self).unwrap_or(0);
+        Self::ALL[(idx + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
+
+    pub fn to_bevy(self) -> WindowMode {
+        match self {
+            Self::Windowed => WindowMode::Windowed,
+            Self::Borderless => WindowMode::BorderlessFullscreen(MonitorSelection::Current),
+            Self::Fullscreen => {
+                WindowMode::Fullscreen(MonitorSelection::Current, VideoModeSelection::Current)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ResolutionPreset {
+    #[default]
+    Hd720,
+    Wide720,
+    Fhd1080,
+    Wide1080,
+    Wxga900,
+    Xga768,
+}
+
+impl ResolutionPreset {
+    pub const ALL: [Self; 6] = [
+        Self::Hd720,
+        Self::Wide720,
+        Self::Fhd1080,
+        Self::Wide1080,
+        Self::Wxga900,
+        Self::Xga768,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Hd720 => "1280×720 (16:9)",
+            Self::Wide720 => "1680×720 (21:9)",
+            Self::Fhd1080 => "1920×1080 (16:9)",
+            Self::Wide1080 => "2560×1080 (21:9)",
+            Self::Wxga900 => "1440×900 (16:10)",
+            Self::Xga768 => "1024×768 (4:3)",
+        }
+    }
+
+    pub fn dimensions(self) -> (f32, f32) {
+        match self {
+            Self::Hd720 => (1280.0, 720.0),
+            Self::Wide720 => (1680.0, 720.0),
+            Self::Fhd1080 => (1920.0, 1080.0),
+            Self::Wide1080 => (2560.0, 1080.0),
+            Self::Wxga900 => (1440.0, 900.0),
+            Self::Xga768 => (1024.0, 768.0),
+        }
+    }
+
+    pub fn next(self) -> Self {
+        let idx = Self::ALL.iter().position(|&r| r == self).unwrap_or(0);
+        Self::ALL[(idx + 1) % Self::ALL.len()]
+    }
+
+    pub fn prev(self) -> Self {
+        let idx = Self::ALL.iter().position(|&r| r == self).unwrap_or(0);
+        Self::ALL[(idx + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
+}
+
 #[derive(Resource)]
 pub struct UiFonts {
     pub libron: Handle<Font>,
@@ -63,6 +157,12 @@ pub struct UiState {
     pub palette: WaterPalette,
     pub shader_panel_open: bool,
     pub font_choice: FontChoice,
+    pub ui_hidden: bool,
+    pub zen_hint_timer: f32,
+    pub pause_menu_open: bool,
+    pub paused_before_menu: bool,
+    pub window_mode: WindowModeChoice,
+    pub resolution_preset: ResolutionPreset,
 }
 
 #[derive(Component)]
@@ -73,6 +173,18 @@ pub struct ShaderPanel;
 
 #[derive(Component)]
 pub struct LowFpsBanner;
+
+#[derive(Component)]
+pub struct ZenHideable;
+
+#[derive(Component)]
+pub struct ZenHintBanner;
+
+#[derive(Component)]
+pub struct ZenHintText;
+
+#[derive(Component)]
+pub struct PauseMenuOverlay;
 
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 pub enum UiAction {
@@ -106,6 +218,12 @@ pub enum UiAction {
     RampNext,
     ToggleFont,
     ResetShader,
+    ToggleHideUi,
+    ClosePauseMenu,
+    WindowModePrev,
+    WindowModeNext,
+    ResolutionPrev,
+    ResolutionNext,
 }
 
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
@@ -127,6 +245,8 @@ pub enum UiLabel {
     GradientReverse,
     Ramp,
     Font,
+    WindowMode,
+    Resolution,
 }
 
 fn spawn_pill_button(
@@ -246,6 +366,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
             BorderColor::all(PANEL_BORDER),
             BackgroundColor(PANEL_BG),
             Interaction::None,
+            ZenHideable,
         ))
         .with_children(|card| {
             card.spawn((
@@ -262,15 +383,18 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
 
     // Top-right container (toolbar + collapsible shader panel)
     commands
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            top: Val::Px(12.0),
-            right: Val::Px(14.0),
-            flex_direction: FlexDirection::Column,
-            align_items: AlignItems::End,
-            row_gap: Val::Px(8.0),
-            ..default()
-        })
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(12.0),
+                right: Val::Px(14.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::End,
+                row_gap: Val::Px(8.0),
+                ..default()
+            },
+            ZenHideable,
+        ))
         .with_children(|col| {
             // Top-right toolbar card
             col.spawn((
@@ -324,6 +448,15 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                     libron.clone(),
                     UiAction::ToggleShaderPanel,
                     Some(UiLabel::ShaderPanelBtn),
+                    12.0,
+                );
+
+                spawn_pill_button(
+                    row,
+                    "Hide (H)",
+                    libron.clone(),
+                    UiAction::ToggleHideUi,
+                    None,
                     12.0,
                 );
             });
@@ -590,12 +723,154 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                     banner.spawn((
                         Text::new("Low FPS (< 10) — particle spawning paused"),
                         TextFont {
-                            font: libron,
+                            font: libron.clone(),
                             font_size: 16.0,
                             ..default()
                         },
                         TextColor(Color::srgb(1.0, 0.88, 0.84)),
                     ));
+                });
+        });
+
+    // Brief fade-out hint when entering Zen (Hide UI) mode
+    commands
+        .spawn((
+            Node {
+                display: Display::None,
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                bottom: Val::Px(22.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            ZenHintBanner,
+        ))
+        .with_children(|wrapper| {
+            wrapper
+                .spawn((
+                    Node {
+                        padding: UiRect::axes(Val::Px(16.0), Val::Px(8.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        border_radius: BorderRadius::all(Val::Px(8.0)),
+                        ..default()
+                    },
+                    BorderColor::all(PANEL_BORDER),
+                    BackgroundColor(PANEL_BG),
+                ))
+                .with_children(|hint| {
+                    hint.spawn((
+                        Text::new("UI hidden — press H to restore  |  Esc: Menu"),
+                        TextFont {
+                            font: libron.clone(),
+                            font_size: 14.0,
+                            ..default()
+                        },
+                        TextColor(TEXT_PRIMARY),
+                        ZenHintText,
+                    ));
+                });
+        });
+
+    // Esc Pause Menu modal overlay
+    commands
+        .spawn((
+            Node {
+                display: Display::None,
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.02, 0.03, 0.06, 0.72)),
+            ZIndex(100),
+            Interaction::None,
+            PauseMenuOverlay,
+        ))
+        .with_children(|backdrop| {
+            backdrop
+                .spawn((
+                    Node {
+                        width: Val::Px(360.0),
+                        padding: UiRect::all(Val::Px(20.0)),
+                        border: UiRect::all(Val::Px(1.5)),
+                        border_radius: BorderRadius::all(Val::Px(12.0)),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(12.0),
+                        ..default()
+                    },
+                    BorderColor::all(PANEL_BORDER),
+                    BackgroundColor(Color::srgba(0.06, 0.08, 0.13, 0.96)),
+                    Interaction::None,
+                ))
+                .with_children(|modal| {
+                    modal.spawn((
+                        Text::new("PAUSED"),
+                        TextFont {
+                            font: libron.clone(),
+                            font_size: 20.0,
+                            ..default()
+                        },
+                        TextColor(TEXT_PRIMARY),
+                    ));
+
+                    modal.spawn((
+                        Text::new("DISPLAY"),
+                        TextFont {
+                            font: libron.clone(),
+                            font_size: 13.0,
+                            ..default()
+                        },
+                        TextColor(TEXT_MUTED),
+                        Node {
+                            margin: UiRect::top(Val::Px(4.0)),
+                            ..default()
+                        },
+                    ));
+
+                    spawn_stepper_row(
+                        modal,
+                        "Window Mode",
+                        "Windowed",
+                        libron.clone(),
+                        UiAction::WindowModePrev,
+                        UiAction::WindowModeNext,
+                        UiLabel::WindowMode,
+                        "<",
+                        ">",
+                    );
+
+                    spawn_stepper_row(
+                        modal,
+                        "Resolution",
+                        "1280×720 (16:9)",
+                        libron.clone(),
+                        UiAction::ResolutionPrev,
+                        UiAction::ResolutionNext,
+                        UiLabel::Resolution,
+                        "<",
+                        ">",
+                    );
+
+                    modal
+                        .spawn(Node {
+                            width: Val::Percent(100.0),
+                            justify_content: JustifyContent::End,
+                            margin: UiRect::top(Val::Px(8.0)),
+                            ..default()
+                        })
+                        .with_children(|footer| {
+                            spawn_pill_button(
+                                footer,
+                                "Resume (Esc)",
+                                libron,
+                                UiAction::ClosePauseMenu,
+                                None,
+                                16.0,
+                            );
+                        });
                 });
         });
 }
@@ -605,8 +880,25 @@ pub struct UiQueries<'w, 's> {
     arena_bg: Query<'w, 's, &'static mut Mesh2d, With<ArenaBackground>>,
     water_quad: Query<'w, 's, &'static mut Visibility, With<WaterQuad>>,
     offscreen_cam: Query<'w, 's, &'static mut Camera, With<OffscreenCamera>>,
-    shader_panel: Query<'w, 's, &'static mut Node, With<ShaderPanel>>,
-    windows: Query<'w, 's, &'static Window, With<PrimaryWindow>>,
+    shader_panel: Query<
+        'w,
+        's,
+        &'static mut Node,
+        (With<ShaderPanel>, Without<ZenHideable>, Without<PauseMenuOverlay>),
+    >,
+    zen_hideable: Query<
+        'w,
+        's,
+        &'static mut Node,
+        (With<ZenHideable>, Without<ShaderPanel>, Without<PauseMenuOverlay>),
+    >,
+    pause_menu: Query<
+        'w,
+        's,
+        &'static mut Node,
+        (With<PauseMenuOverlay>, Without<ShaderPanel>, Without<ZenHideable>),
+    >,
+    windows: Query<'w, 's, &'static mut Window, With<PrimaryWindow>>,
     camera_q: Query<'w, 's, (&'static Camera, &'static GlobalTransform), Without<OffscreenCamera>>,
     panel_interactions: Query<'w, 's, &'static Interaction, Without<UiAction>>,
     buttons: Query<
@@ -683,7 +975,9 @@ pub fn handle_input(
 
     let mut gravity_toggled = keys.just_pressed(KeyCode::KeyG);
     let mut cursor_toggled = keys.just_pressed(KeyCode::KeyC);
-    let mut panel_toggled = keys.just_pressed(KeyCode::Tab);
+    let mut panel_toggled = keys.just_pressed(KeyCode::Tab) && !ui_state.pause_menu_open;
+    let mut hide_ui_toggled = keys.just_pressed(KeyCode::KeyH) && !ui_state.pause_menu_open;
+    let mut pause_menu_toggled = keys.just_pressed(KeyCode::Escape);
     let mut shader_dirty = false;
     let mut size_dirty = false;
     let mut colors_dirty = false;
@@ -691,6 +985,8 @@ pub fn handle_input(
     let mut motion_dirty = false;
     let mut container_dirty = false;
     let mut font_toggled = false;
+    let mut window_mode_dirty = false;
+    let mut resolution_dirty = false;
 
     for (interaction, action, mut bg, mut border) in &mut ui.buttons {
         let clicked = *interaction == Interaction::Pressed && mouse.just_pressed(MouseButton::Left);
@@ -849,6 +1145,28 @@ pub fn handle_input(
                     motion_dirty = true;
                     container_dirty = true;
                 }
+                UiAction::ToggleHideUi => hide_ui_toggled = true,
+                UiAction::ClosePauseMenu => {
+                    if ui_state.pause_menu_open {
+                        pause_menu_toggled = true;
+                    }
+                }
+                UiAction::WindowModePrev => {
+                    ui_state.window_mode = ui_state.window_mode.prev();
+                    window_mode_dirty = true;
+                }
+                UiAction::WindowModeNext => {
+                    ui_state.window_mode = ui_state.window_mode.next();
+                    window_mode_dirty = true;
+                }
+                UiAction::ResolutionPrev => {
+                    ui_state.resolution_preset = ui_state.resolution_preset.prev();
+                    resolution_dirty = true;
+                }
+                UiAction::ResolutionNext => {
+                    ui_state.resolution_preset = ui_state.resolution_preset.next();
+                    resolution_dirty = true;
+                }
             }
         }
 
@@ -885,6 +1203,52 @@ pub fn handle_input(
             } else {
                 Display::None
             };
+        }
+    }
+
+    if hide_ui_toggled {
+        ui_state.ui_hidden = !ui_state.ui_hidden;
+        ui_state.zen_hint_timer = if ui_state.ui_hidden { 2.5 } else { 0.0 };
+        let disp = if ui_state.ui_hidden {
+            Display::None
+        } else {
+            Display::Flex
+        };
+        for mut node in &mut ui.zen_hideable {
+            node.display = disp;
+        }
+    }
+
+    if pause_menu_toggled {
+        ui_state.pause_menu_open = !ui_state.pause_menu_open;
+        if ui_state.pause_menu_open {
+            ui_state.paused_before_menu = state.paused;
+            state.paused = true;
+        } else {
+            state.paused = ui_state.paused_before_menu;
+        }
+        let disp = if ui_state.pause_menu_open {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        for mut node in &mut ui.pause_menu {
+            node.display = disp;
+        }
+    }
+
+    if resolution_dirty && ui_state.window_mode != WindowModeChoice::Windowed {
+        ui_state.window_mode = WindowModeChoice::Windowed;
+        window_mode_dirty = true;
+    }
+
+    if window_mode_dirty || resolution_dirty {
+        if let Ok(mut window) = ui.windows.single_mut() {
+            window.mode = ui_state.window_mode.to_bevy();
+            if ui_state.window_mode == WindowModeChoice::Windowed {
+                let (w, h) = ui_state.resolution_preset.dimensions();
+                window.resolution.set(w, h);
+            }
         }
     }
 
@@ -955,6 +1319,8 @@ pub fn handle_input(
         || colors_dirty
         || panel_toggled
         || font_toggled
+        || window_mode_dirty
+        || resolution_dirty
     {
         let params = water_materials
             .get(&assets.water_material)
@@ -1029,11 +1395,17 @@ pub fn handle_input(
                 UiLabel::Font => {
                     **text = ui_state.font_choice.name().to_string();
                 }
+                UiLabel::WindowMode => {
+                    **text = ui_state.window_mode.name().to_string();
+                }
+                UiLabel::Resolution => {
+                    **text = ui_state.resolution_preset.name().to_string();
+                }
             }
         }
     }
 
-    if keys.just_pressed(KeyCode::Space) {
+    if keys.just_pressed(KeyCode::Space) && !ui_state.pause_menu_open {
         state.paused = !state.paused;
     }
 
@@ -1090,7 +1462,8 @@ pub fn handle_input(
         }
     }
 
-    if state.cursor_mode == CursorMode::Spawn
+    if !ui_state.pause_menu_open
+        && state.cursor_mode == CursorMode::Spawn
         && (mouse.pressed(MouseButton::Left) || mouse.pressed(MouseButton::Right))
     {
         let over_ui = ui.buttons.iter().any(|(i, ..)| *i != Interaction::None)
@@ -1165,8 +1538,11 @@ pub fn update_hud(
     diagnostics: Res<DiagnosticsStore>,
     time: Res<Time>,
     mut state: ResMut<SimState>,
+    mut ui_state: ResMut<UiState>,
     mut q: Query<&mut Text, With<HudText>>,
     mut banner_q: Query<&mut Node, With<LowFpsBanner>>,
+    mut zen_hint_q: Query<&mut Node, (With<ZenHintBanner>, Without<LowFpsBanner>)>,
+    mut zen_hint_text_q: Query<&mut TextColor, With<ZenHintText>>,
 ) {
     let smoothed_fps = diagnostics
         .get(&FrameTimeDiagnosticsPlugin::FPS)
@@ -1187,6 +1563,24 @@ pub fn update_hud(
         };
     }
 
+    if ui_state.zen_hint_timer > 0.0 {
+        ui_state.zen_hint_timer = (ui_state.zen_hint_timer - time.delta_secs()).max(0.0);
+    }
+    let show_zen_hint = ui_state.ui_hidden && !ui_state.pause_menu_open && ui_state.zen_hint_timer > 0.0;
+    for mut node in &mut zen_hint_q {
+        node.display = if show_zen_hint {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+    if show_zen_hint {
+        let alpha = (ui_state.zen_hint_timer / 0.8).clamp(0.0, 1.0);
+        for mut tc in &mut zen_hint_text_q {
+            tc.0 = TEXT_PRIMARY.with_alpha(alpha);
+        }
+    }
+
     let mode = if state.water_mode {
         "LIQUID MODE"
     } else {
@@ -1196,7 +1590,7 @@ pub fn update_hud(
     for mut text in &mut q {
         **text = format!(
             "MIZU  |  {mode}  |  {} units  |  {fps:.0} FPS  |  {status}\n\
-             W: View   C: Cursor   L/R-Drag: Repel/Attract or Add/Del   [/] Scroll: Force/Amt   +/-: ±500   Space: Pause   R: Reset   Tab: Visuals",
+             W: View   C: Cursor   L/R-Drag: Repel/Attract or Add/Del   [/] Scroll: Force/Amt   +/-: ±500   Space: Pause   R: Reset   Tab: Visuals   H: Hide UI   Esc: Menu",
             state.unit_count
         );
     }
