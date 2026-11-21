@@ -13,6 +13,10 @@ pub const DEFAULT_GRAVITY_STRENGTH: f32 = 520.0;
 pub const MIN_GRAVITY_STRENGTH: f32 = 100.0;
 pub const MAX_GRAVITY_STRENGTH: f32 = 1500.0;
 
+pub const DEFAULT_SPAWN_AMOUNT: usize = 10;
+pub const MIN_SPAWN_AMOUNT: usize = 1;
+pub const MAX_SPAWN_AMOUNT: usize = 100;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ContainerShape {
     #[default]
@@ -168,6 +172,61 @@ impl GravityDirection {
     }
 }
 pub const INITIAL_UNITS: usize = 4000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MotionMode {
+    #[default]
+    Fluid,
+    LavaLamp,
+    Swirl,
+    ZeroG,
+}
+
+impl MotionMode {
+    pub const ALL: [Self; 4] = [Self::Fluid, Self::LavaLamp, Self::Swirl, Self::ZeroG];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Fluid => "Fluid",
+            Self::LavaLamp => "Lava Lamp",
+            Self::Swirl => "Swirl",
+            Self::ZeroG => "Zero-G",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        let idx = Self::ALL.iter().position(|&m| m == self).unwrap_or(0);
+        Self::ALL[(idx + 1) % Self::ALL.len()]
+    }
+
+    pub fn prev(self) -> Self {
+        let idx = Self::ALL.iter().position(|&m| m == self).unwrap_or(0);
+        Self::ALL[(idx + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CursorMode {
+    #[default]
+    Force,
+    Spawn,
+}
+
+impl CursorMode {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Force => "Force",
+            Self::Spawn => "Add/Del",
+        }
+    }
+
+    pub fn toggle(self) -> Self {
+        match self {
+            Self::Force => Self::Spawn,
+            Self::Spawn => Self::Force,
+        }
+    }
+}
 
 #[inline]
 pub fn grid_cell_size(unit_radius: f32) -> f32 {
@@ -348,13 +407,17 @@ pub struct SimState {
     pub gravity_enabled: bool,
     pub gravity_strength: f32,
     pub gravity_direction: GravityDirection,
+    pub motion_mode: MotionMode,
+    pub cursor_mode: CursorMode,
     pub container_shape: ContainerShape,
     pub force_strength: f32,
+    pub spawn_amount: usize,
     pub unit_radius: f32,
     pub gradient_mode: ParticleGradientMode,
     pub gradient_reversed: bool,
     pub color_ramp: ParticleColorRamp,
     pub unit_count: usize,
+    pub low_fps: bool,
     pub rng_seed: u64,
 }
 
@@ -366,13 +429,17 @@ impl Default for SimState {
             gravity_enabled: false,
             gravity_strength: DEFAULT_GRAVITY_STRENGTH,
             gravity_direction: GravityDirection::default(),
+            motion_mode: MotionMode::default(),
+            cursor_mode: CursorMode::default(),
             container_shape: ContainerShape::default(),
             force_strength: 900.0,
+            spawn_amount: DEFAULT_SPAWN_AMOUNT,
             unit_radius: DEFAULT_UNIT_RADIUS,
             gradient_mode: ParticleGradientMode::default(),
             gradient_reversed: false,
             color_ramp: ParticleColorRamp::default(),
             unit_count: 0,
+            low_fps: false,
             rng_seed: 0x1234_5678_9abc_def0,
         }
     }
@@ -472,6 +539,7 @@ pub struct Unit {
     pub vel: Vec2,
     pub base_hue: f32,
     pub density: f32,
+    pub heat: f32,
 }
 
 #[derive(Resource)]
@@ -559,6 +627,7 @@ pub fn spawn_units(
         let speed = 55.0 + state.next_f32() * 65.0;
         let base_hue = state.next_f32() * 360.0;
         let vel = Vec2::new(angle.cos() * speed, angle.sin() * speed);
+        let heat = state.next_f32();
 
         let color = if state.water_mode {
             Color::WHITE
@@ -580,12 +649,81 @@ pub fn spawn_units(
                 vel,
                 base_hue,
                 density: 0.0,
+                heat,
             },
         ));
     }
 
     commands.spawn_batch(batch);
     state.unit_count += count;
+}
+
+pub fn spawn_units_at(
+    commands: &mut Commands,
+    assets: &UnitAssets,
+    state: &mut SimState,
+    center: Vec2,
+    count: usize,
+    spread: f32,
+) {
+    let size = state.unit_sprite_size();
+    let (texture, layer) = if state.water_mode {
+        (assets.blob_texture.clone(), RenderLayers::layer(1))
+    } else {
+        (assets.circle_texture.clone(), RenderLayers::layer(0))
+    };
+
+    let radius = state.unit_radius;
+    let shape = state.container_shape;
+    let mut batch = Vec::with_capacity(count);
+    for _ in 0..count {
+        let jitter_a = state.next_f32() * TAU;
+        let jitter_r = state.next_f32().sqrt() * spread;
+        let candidate = center + Vec2::new(jitter_a.cos() * jitter_r, jitter_a.sin() * jitter_r);
+        let pos = if shape.contains(candidate, radius) {
+            candidate
+        } else if shape.contains(center, radius) {
+            center
+        } else {
+            continue;
+        };
+
+        let angle = state.next_f32() * TAU;
+        let speed = 15.0 + state.next_f32() * 35.0;
+        let base_hue = state.next_f32() * 360.0;
+        let vel = Vec2::new(angle.cos() * speed, angle.sin() * speed);
+        let heat = state.next_f32();
+
+        let color = if state.water_mode {
+            Color::WHITE
+        } else {
+            particle_color(pos, vel, 0.0, base_hue, state)
+        };
+
+        batch.push((
+            Sprite {
+                image: texture.clone(),
+                color,
+                custom_size: Some(size),
+                ..default()
+            },
+            Transform::from_xyz(pos.x, pos.y, 0.0),
+            layer.clone(),
+            Unit {
+                pos,
+                vel,
+                base_hue,
+                density: 0.0,
+                heat,
+            },
+        ));
+    }
+
+    let spawned = batch.len();
+    if spawned > 0 {
+        commands.spawn_batch(batch);
+        state.unit_count += spawned;
+    }
 }
 
 pub fn step_simulation(
@@ -608,8 +746,10 @@ pub fn step_simulation(
     }
 
     let over_ui = ui_interactions.iter().any(|i| *i != Interaction::None);
-    let cursor_force =
-        if !over_ui && (buttons.pressed(MouseButton::Left) || buttons.pressed(MouseButton::Right)) {
+    let cursor_force = if state.cursor_mode == CursorMode::Force
+        && !over_ui
+        && (buttons.pressed(MouseButton::Left) || buttons.pressed(MouseButton::Right))
+    {
         let attract = buttons.pressed(MouseButton::Right);
         windows
             .single()
@@ -626,9 +766,9 @@ pub fn step_simulation(
         None
     };
 
-    let mut data: Vec<(Vec2, Vec2)> = Vec::with_capacity(state.unit_count);
+    let mut data: Vec<(Vec2, Vec2, f32)> = Vec::with_capacity(state.unit_count);
     for (unit, _, _) in &query {
-        data.push((unit.pos, unit.vel));
+        data.push((unit.pos, unit.vel, unit.heat));
     }
 
     let n = data.len();
@@ -646,7 +786,9 @@ pub fn step_simulation(
     let gravity_enabled = state.gravity_enabled;
     let gravity_strength = state.gravity_strength;
     let gravity_direction = state.gravity_direction;
+    let motion_mode = state.motion_mode;
     let container_shape = state.container_shape;
+    let elapsed = time.elapsed_secs();
 
     #[inline]
     fn resolve_wall(
@@ -671,14 +813,69 @@ pub fn step_simulation(
         }
     }
 
-    for (pos, vel) in &mut data {
-        let g_dir = if gravity_enabled {
-            let dir = gravity_direction.dir_at(*pos);
-            *vel += dir * gravity_strength * dt;
-            dir
-        } else {
-            Vec2::ZERO
-        };
+    for (pos, vel, heat) in &mut data {
+        let mut g_dir = Vec2::ZERO;
+        match motion_mode {
+            MotionMode::Fluid => {
+                if gravity_enabled {
+                    g_dir = gravity_direction.dir_at(*pos);
+                    *vel += g_dir * gravity_strength * dt;
+                }
+            }
+            MotionMode::LavaLamp => {
+                let (up_dir, h) = if gravity_enabled && gravity_direction == GravityDirection::Center
+                {
+                    let up = if pos.length_squared() > 1.0 {
+                        pos.normalize()
+                    } else {
+                        Vec2::Y
+                    };
+                    let norm_h = (1.0 - pos.length() / ARENA_HALF_H).clamp(0.0, 1.0);
+                    (up, norm_h)
+                } else {
+                    let down = if gravity_enabled {
+                        gravity_direction.dir_at(*pos)
+                    } else {
+                        Vec2::NEG_Y
+                    };
+                    let up = -down;
+                    let norm_h = ((pos.dot(up) + ARENA_HALF_H) / (2.0 * ARENA_HALF_H)).clamp(0.0, 1.0);
+                    (up, norm_h)
+                };
+                g_dir = -up_dir;
+
+                if h < 0.24 {
+                    *heat = (*heat + (1.0 - h / 0.24) * 0.55 * dt).min(1.0);
+                } else if h > 0.76 {
+                    *heat = (*heat - ((h - 0.76) / 0.24) * 0.55 * dt).max(0.0);
+                }
+
+                let buoyancy = (*heat - 0.50) * 340.0;
+                let perp = Vec2::new(-up_dir.y, up_dir.x);
+                let plume = (pos.dot(perp) * 0.015 + elapsed * 0.45 + *heat * 3.0).sin() * 45.0;
+                *vel += up_dir * buoyancy * dt + perp * plume * dt;
+                *vel *= (1.0 - 2.4 * dt).max(0.0);
+            }
+            MotionMode::Swirl => {
+                if gravity_enabled {
+                    g_dir = gravity_direction.dir_at(*pos);
+                    *vel += g_dir * gravity_strength * dt;
+                }
+                let r_sq = pos.length_squared();
+                if r_sq > 4.0 {
+                    let r = r_sq.sqrt();
+                    let radial = *pos / r;
+                    let tangent = Vec2::new(-radial.y, radial.x);
+                    *vel += (tangent * 280.0 - radial * 95.0) * dt;
+                }
+            }
+            MotionMode::ZeroG => {
+                let drift_x = (pos.y * 0.012 + elapsed * 0.6).sin() * 24.0;
+                let drift_y = (pos.x * 0.012 - elapsed * 0.5).cos() * 24.0;
+                *vel += Vec2::new(drift_x, drift_y) * dt;
+                *vel *= (1.0 - 0.15 * dt).max(0.0);
+            }
+        }
 
         if let Some((target, dir)) = cursor_force {
             let delta = target - *pos;
@@ -691,32 +888,51 @@ pub fn step_simulation(
         }
 
         let speed = vel.length();
-        let base_max: f32 = if gravity_enabled {
-            460.0_f32.max(gravity_strength * 0.9)
-        } else {
-            260.0
+        let base_max: f32 = match motion_mode {
+            MotionMode::LavaLamp => 150.0,
+            MotionMode::ZeroG => 220.0,
+            MotionMode::Fluid | MotionMode::Swirl => {
+                if gravity_enabled {
+                    460.0_f32.max(gravity_strength * 0.9)
+                } else {
+                    260.0
+                }
+            }
         };
         let max_speed = base_max.max(state.force_strength * 0.45);
         if speed > max_speed {
             *vel *= max_speed / speed;
-        } else if !gravity_enabled && speed > 1.0 && speed < 50.0 {
+        } else if motion_mode == MotionMode::Fluid && !gravity_enabled && speed > 1.0 && speed < 50.0
+        {
             *vel *= (speed + 40.0 * dt) / speed;
         }
 
         *pos += *vel * dt;
 
-        let default_bounce = if gravity_enabled { 0.45 } else { 1.0 };
+        let default_bounce = match motion_mode {
+            MotionMode::LavaLamp => 0.25,
+            MotionMode::ZeroG => 0.95,
+            MotionMode::Fluid | MotionMode::Swirl => {
+                if gravity_enabled {
+                    0.45
+                } else {
+                    1.0
+                }
+            }
+        };
+        let wall_gravity =
+            motion_mode == MotionMode::LavaLamp || (gravity_enabled && motion_mode != MotionMode::ZeroG);
         match container_shape {
             ContainerShape::Rectangle => {
                 if pos.x < min_x {
-                    resolve_wall(pos, vel, Vec2::NEG_X, min_x - pos.x, gravity_enabled, g_dir, default_bounce);
+                    resolve_wall(pos, vel, Vec2::NEG_X, min_x - pos.x, wall_gravity, g_dir, default_bounce);
                 } else if pos.x > max_x {
-                    resolve_wall(pos, vel, Vec2::X, pos.x - max_x, gravity_enabled, g_dir, default_bounce);
+                    resolve_wall(pos, vel, Vec2::X, pos.x - max_x, wall_gravity, g_dir, default_bounce);
                 }
                 if pos.y < min_y {
-                    resolve_wall(pos, vel, Vec2::NEG_Y, min_y - pos.y, gravity_enabled, g_dir, default_bounce);
+                    resolve_wall(pos, vel, Vec2::NEG_Y, min_y - pos.y, wall_gravity, g_dir, default_bounce);
                 } else if pos.y > max_y {
-                    resolve_wall(pos, vel, Vec2::Y, pos.y - max_y, gravity_enabled, g_dir, default_bounce);
+                    resolve_wall(pos, vel, Vec2::Y, pos.y - max_y, wall_gravity, g_dir, default_bounce);
                 }
             }
             ContainerShape::Circle => {
@@ -724,7 +940,7 @@ pub fn step_simulation(
                 if dist_sq > circle_max_r * circle_max_r {
                     let dist = dist_sq.sqrt();
                     let normal = *pos / dist;
-                    resolve_wall(pos, vel, normal, dist - circle_max_r, gravity_enabled, g_dir, default_bounce);
+                    resolve_wall(pos, vel, normal, dist - circle_max_r, wall_gravity, g_dir, default_bounce);
                 }
             }
             ContainerShape::Hexagon | ContainerShape::Triangle => {
@@ -738,7 +954,7 @@ pub fn step_simulation(
                         let normal = Vec2::new(angle.cos(), angle.sin());
                         let pen = pos.dot(normal) - apothem;
                         if pen > 0.0 {
-                            resolve_wall(pos, vel, normal, pen, gravity_enabled, g_dir, default_bounce);
+                            resolve_wall(pos, vel, normal, pen, wall_gravity, g_dir, default_bounce);
                         }
                     }
                 }
@@ -752,13 +968,14 @@ pub fn step_simulation(
     }
 
     grid.clear();
-    for (i, (pos, _)) in data.iter().enumerate() {
+    for (i, (pos, _, _)) in data.iter().enumerate() {
         grid.insert(i, *pos);
     }
 
     let min_dist = radius * 2.0;
     let min_dist_sq = min_dist * min_dist;
     let track_density = !state.water_mode && state.gradient_mode == ParticleGradientMode::Density;
+    let diffuse_heat = motion_mode == MotionMode::LavaLamp;
     let density_r_sq = grid.cell_size * grid.cell_size;
     let mut neighbor_counts = if track_density {
         vec![0u16; n]
@@ -801,6 +1018,12 @@ pub fn step_simulation(
                             data[i].1 += impulse;
                             data[j].1 -= impulse;
                         }
+
+                        if diffuse_heat {
+                            let avg = 0.5 * (data[i].2 + data[j].2);
+                            data[i].2 += (avg - data[i].2) * 0.12;
+                            data[j].2 += (avg - data[j].2) * 0.12;
+                        }
                     }
                 }
             }
@@ -808,11 +1031,12 @@ pub fn step_simulation(
     }
 
     let water_mode = state.water_mode;
-    for (idx, ((mut unit, mut transform, mut sprite), (pos, vel))) in
+    for (idx, ((mut unit, mut transform, mut sprite), (pos, vel, heat))) in
         query.iter_mut().zip(data).enumerate()
     {
         unit.pos = pos;
         unit.vel = vel;
+        unit.heat = heat;
         if track_density {
             unit.density = (neighbor_counts[idx] as f32 / 8.0).clamp(0.0, 1.0);
         }

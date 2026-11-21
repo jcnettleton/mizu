@@ -116,17 +116,17 @@
 
 ---
 
-## Phase 7 — Motion Modes & Interactive Spawning
+## Phase 7 — Motion Modes & Interactive Spawning (Done)
 
-- [ ] **7A: Motion modes (Lava Lamp & physics presets)**
+- [x] **7A: Motion modes (Lava Lamp & physics presets)**
   - **Files:** `src/sim.rs`, `src/ui.rs`
   - **Scope:** Add a `MotionMode` enum to `SimState` (e.g., `Fluid` for standard physics, `LavaLamp` for slow thermal buoyancy/convection where bottom-heated particles rise in cohesive blobs and cool particles sink, plus optional `Swirl`/`ZeroG` drift). Add a UI cycle control in the Visuals/Simulation panel.
   - **Acceptance:** Switching to `LavaLamp` causes particles to rise and sink in slow, organic thermal plumes instead of settling flat on the floor.
-- [ ] **7B: Click-to-Add / Remove cursor mode**
+- [x] **7B: Click-to-Add / Remove cursor mode**
   - **Files:** `src/ui.rs`, `src/sim.rs`
   - **Scope:** Add a `CursorMode` enum (`Force` for Repel/Attract vs `Spawn` for Add/Remove) toggled via a UI button and hotkey (e.g., `C`). In `Spawn` mode, Left-Click/Drag spawns new particles at the cursor (with slight jitter) and Right-Click/Drag removes particles within a cursor brush radius.
   - **Acceptance:** Switching to Add/Remove mode lets the user paint new particles with left-drag and erase particles with right-drag.
-- [ ] **7C: FPS-based particle limit & low-FPS warning**
+- [x] **7C: FPS-based particle limit & low-FPS warning**
   - **Files:** `src/main.rs`, `src/sim.rs`, `src/ui.rs`
   - **Scope:** Track smoothed FPS (via `FrameTimeDiagnosticsPlugin` or `Time::delta_secs()`). When FPS drops below `10`, block adding new particles (both from `+`/`Up` hotkeys and from Click-to-Add) and display a centered warning banner on screen (e.g., `"Low FPS (< 10) — particle spawning paused"`). Allow removing particles normally so the user can recover.
   - **Acceptance:** Spawning enough particles to drop FPS below `10` prevents further additions and shows the centered warning until FPS rises back above `10`.

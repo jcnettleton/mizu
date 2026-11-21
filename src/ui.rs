@@ -4,14 +4,16 @@ use bevy::{
     ecs::system::SystemParam,
     input::mouse::{AccumulatedMouseScroll, MouseScrollUnit},
     prelude::*,
+    window::PrimaryWindow,
 };
 use std::f32::consts::TAU;
 
 use crate::sim::{
-    ARENA_HALF_H, ARENA_HALF_W, ContainerShape, DEFAULT_GRAVITY_STRENGTH, DEFAULT_UNIT_RADIUS,
-    GravityDirection, MAX_GRAVITY_STRENGTH, MAX_UNIT_RADIUS, MIN_GRAVITY_STRENGTH, MIN_UNIT_RADIUS,
-    ParticleColorRamp, ParticleGradientMode, SimState, SpatialGrid, Unit, grid_cell_size,
-    particle_color, particle_color_with, spawn_units,
+    ARENA_HALF_H, ARENA_HALF_W, ContainerShape, CursorMode, DEFAULT_GRAVITY_STRENGTH,
+    DEFAULT_UNIT_RADIUS, GravityDirection, MAX_GRAVITY_STRENGTH, MAX_SPAWN_AMOUNT, MAX_UNIT_RADIUS,
+    MIN_GRAVITY_STRENGTH, MIN_SPAWN_AMOUNT, MIN_UNIT_RADIUS, MotionMode, ParticleColorRamp,
+    ParticleGradientMode, SimState, SpatialGrid, Unit, grid_cell_size, particle_color,
+    particle_color_with, spawn_units, spawn_units_at,
 };
 use crate::water::{
     ArenaBackground, OffscreenCamera, UnitAssets, WaterMaterial, WaterPalette, WaterParams,
@@ -69,15 +71,21 @@ pub struct HudText;
 #[derive(Component)]
 pub struct ShaderPanel;
 
+#[derive(Component)]
+pub struct LowFpsBanner;
+
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 pub enum UiAction {
     ForceDown,
     ForceUp,
     ToggleGravity,
+    ToggleCursorMode,
     GravityStrengthDown,
     GravityStrengthUp,
     GravityDirPrev,
     GravityDirNext,
+    MotionPrev,
+    MotionNext,
     ContainerPrev,
     ContainerNext,
     ToggleShaderPanel,
@@ -104,8 +112,10 @@ pub enum UiAction {
 pub enum UiLabel {
     Force,
     Gravity,
+    CursorMode,
     GravityStrength,
     GravityDir,
+    Motion,
     Container,
     ShaderPanelBtn,
     Palette,
@@ -296,6 +306,15 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                     libron.clone(),
                     UiAction::ToggleGravity,
                     Some(UiLabel::Gravity),
+                    12.0,
+                );
+
+                spawn_pill_button(
+                    row,
+                    "Cursor (C): Force",
+                    libron.clone(),
+                    UiAction::ToggleCursorMode,
+                    Some(UiLabel::CursorMode),
                     12.0,
                 );
 
@@ -499,6 +518,18 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
 
                 spawn_stepper_row(
                     panel,
+                    "Motion",
+                    "Fluid",
+                    libron.clone(),
+                    UiAction::MotionPrev,
+                    UiAction::MotionNext,
+                    UiLabel::Motion,
+                    "<",
+                    ">",
+                );
+
+                spawn_stepper_row(
+                    panel,
                     "Shape",
                     "Rectangle",
                     libron.clone(),
@@ -528,6 +559,45 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                     });
             });
         });
+
+    // Centered low-FPS warning banner (hidden by default)
+    commands
+        .spawn((
+            Node {
+                display: Display::None,
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                top: Val::Px(72.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            LowFpsBanner,
+        ))
+        .with_children(|wrapper| {
+            wrapper
+                .spawn((
+                    Node {
+                        padding: UiRect::axes(Val::Px(18.0), Val::Px(10.0)),
+                        border: UiRect::all(Val::Px(1.5)),
+                        border_radius: BorderRadius::all(Val::Px(8.0)),
+                        ..default()
+                    },
+                    BorderColor::all(Color::srgba(1.0, 0.42, 0.32, 0.85)),
+                    BackgroundColor(Color::srgba(0.26, 0.06, 0.06, 0.92)),
+                ))
+                .with_children(|banner| {
+                    banner.spawn((
+                        Text::new("Low FPS (< 10) — particle spawning paused"),
+                        TextFont {
+                            font: libron,
+                            font_size: 16.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(1.0, 0.88, 0.84)),
+                    ));
+                });
+        });
 }
 
 #[derive(SystemParam)]
@@ -536,6 +606,9 @@ pub struct UiQueries<'w, 's> {
     water_quad: Query<'w, 's, &'static mut Visibility, With<WaterQuad>>,
     offscreen_cam: Query<'w, 's, &'static mut Camera, With<OffscreenCamera>>,
     shader_panel: Query<'w, 's, &'static mut Node, With<ShaderPanel>>,
+    windows: Query<'w, 's, &'static Window, With<PrimaryWindow>>,
+    camera_q: Query<'w, 's, (&'static Camera, &'static GlobalTransform), Without<OffscreenCamera>>,
+    panel_interactions: Query<'w, 's, &'static Interaction, Without<UiAction>>,
     buttons: Query<
         'w,
         's,
@@ -571,26 +644,51 @@ pub fn handle_input(
     mut ui: UiQueries,
 ) {
     let mut force_delta: f32 = 0.0;
+    let mut amount_delta: isize = 0;
+    let is_spawn_mode = state.cursor_mode == CursorMode::Spawn;
+
     if keys.just_pressed(KeyCode::BracketRight) {
-        force_delta += 300.0;
+        if is_spawn_mode {
+            amount_delta += 5;
+        } else {
+            force_delta += 300.0;
+        }
     }
     if keys.just_pressed(KeyCode::BracketLeft) {
-        force_delta -= 300.0;
+        if is_spawn_mode {
+            amount_delta -= 5;
+        } else {
+            force_delta -= 300.0;
+        }
     }
     if scroll.delta.y.abs() > 0.0 {
-        let step = match scroll.unit {
-            MouseScrollUnit::Line => scroll.delta.y * 150.0,
-            MouseScrollUnit::Pixel => (scroll.delta.y * 3.0).clamp(-300.0, 300.0),
-        };
-        force_delta += step;
+        if is_spawn_mode {
+            let step = match scroll.unit {
+                MouseScrollUnit::Line => (scroll.delta.y * 2.0).round() as isize,
+                MouseScrollUnit::Pixel => (scroll.delta.y * 0.05).round().clamp(-5.0, 5.0) as isize,
+            };
+            amount_delta += if step == 0 {
+                scroll.delta.y.signum() as isize
+            } else {
+                step
+            };
+        } else {
+            let step = match scroll.unit {
+                MouseScrollUnit::Line => scroll.delta.y * 150.0,
+                MouseScrollUnit::Pixel => (scroll.delta.y * 3.0).clamp(-300.0, 300.0),
+            };
+            force_delta += step;
+        }
     }
 
     let mut gravity_toggled = keys.just_pressed(KeyCode::KeyG);
+    let mut cursor_toggled = keys.just_pressed(KeyCode::KeyC);
     let mut panel_toggled = keys.just_pressed(KeyCode::Tab);
     let mut shader_dirty = false;
     let mut size_dirty = false;
     let mut colors_dirty = false;
     let mut gravity_dirty = false;
+    let mut motion_dirty = false;
     let mut container_dirty = false;
     let mut font_toggled = false;
 
@@ -598,9 +696,22 @@ pub fn handle_input(
         let clicked = *interaction == Interaction::Pressed && mouse.just_pressed(MouseButton::Left);
         if clicked {
             match action {
-                UiAction::ForceDown => force_delta -= 300.0,
-                UiAction::ForceUp => force_delta += 300.0,
+                UiAction::ForceDown => {
+                    if is_spawn_mode {
+                        amount_delta -= 5;
+                    } else {
+                        force_delta -= 300.0;
+                    }
+                }
+                UiAction::ForceUp => {
+                    if is_spawn_mode {
+                        amount_delta += 5;
+                    } else {
+                        force_delta += 300.0;
+                    }
+                }
                 UiAction::ToggleGravity => gravity_toggled = true,
+                UiAction::ToggleCursorMode => cursor_toggled = true,
                 UiAction::GravityStrengthDown => {
                     state.gravity_strength = (state.gravity_strength - 100.0)
                         .clamp(MIN_GRAVITY_STRENGTH, MAX_GRAVITY_STRENGTH);
@@ -618,6 +729,14 @@ pub fn handle_input(
                 UiAction::GravityDirNext => {
                     state.gravity_direction = state.gravity_direction.next();
                     gravity_dirty = true;
+                }
+                UiAction::MotionPrev => {
+                    state.motion_mode = state.motion_mode.prev();
+                    motion_dirty = true;
+                }
+                UiAction::MotionNext => {
+                    state.motion_mode = state.motion_mode.next();
+                    motion_dirty = true;
                 }
                 UiAction::ContainerPrev => {
                     state.container_shape = state.container_shape.prev();
@@ -721,11 +840,13 @@ pub fn handle_input(
                     state.color_ramp = ParticleColorRamp::default();
                     state.gravity_strength = DEFAULT_GRAVITY_STRENGTH;
                     state.gravity_direction = GravityDirection::default();
+                    state.motion_mode = MotionMode::default();
                     state.container_shape = ContainerShape::default();
                     shader_dirty = true;
                     size_dirty = true;
                     colors_dirty = true;
                     gravity_dirty = true;
+                    motion_dirty = true;
                     container_dirty = true;
                 }
             }
@@ -734,6 +855,9 @@ pub fn handle_input(
         let is_active = matches!(
             action,
             UiAction::ToggleGravity if state.gravity_enabled
+        ) || matches!(
+            action,
+            UiAction::ToggleCursorMode if state.cursor_mode == CursorMode::Spawn
         ) || matches!(
             action,
             UiAction::ToggleShaderPanel if ui_state.shader_panel_open
@@ -774,8 +898,18 @@ pub fn handle_input(
         state.force_strength = (state.force_strength + force_delta).clamp(300.0, 4500.0);
     }
 
+    if amount_delta != 0 {
+        state.spawn_amount = (state.spawn_amount as isize + amount_delta)
+            .clamp(MIN_SPAWN_AMOUNT as isize, MAX_SPAWN_AMOUNT as isize)
+            as usize;
+    }
+
     if gravity_toggled {
         state.gravity_enabled = !state.gravity_enabled;
+    }
+
+    if cursor_toggled {
+        state.cursor_mode = state.cursor_mode.toggle();
     }
 
     if font_toggled {
@@ -810,8 +944,11 @@ pub fn handle_input(
     }
 
     if force_delta != 0.0
+        || amount_delta != 0
         || gravity_toggled
+        || cursor_toggled
         || gravity_dirty
+        || motion_dirty
         || container_dirty
         || shader_dirty
         || size_dirty
@@ -827,7 +964,10 @@ pub fn handle_input(
         for (label, mut text) in &mut ui.labels {
             match label {
                 UiLabel::Force => {
-                    **text = format!("Force: {:.0}", state.force_strength);
+                    **text = match state.cursor_mode {
+                        CursorMode::Force => format!("Force: {:.0}", state.force_strength),
+                        CursorMode::Spawn => format!("Amount: {}", state.spawn_amount),
+                    };
                 }
                 UiLabel::Gravity => {
                     **text = if state.gravity_enabled {
@@ -836,11 +976,17 @@ pub fn handle_input(
                         "Gravity (G): OFF".to_string()
                     };
                 }
+                UiLabel::CursorMode => {
+                    **text = format!("Cursor (C): {}", state.cursor_mode.name());
+                }
                 UiLabel::GravityStrength => {
                     **text = format!("{:.0}", state.gravity_strength);
                 }
                 UiLabel::GravityDir => {
                     **text = state.gravity_direction.name().to_string();
+                }
+                UiLabel::Motion => {
+                    **text = state.motion_mode.name().to_string();
                 }
                 UiLabel::Container => {
                     **text = state.container_shape.name().to_string();
@@ -926,7 +1072,7 @@ pub fn handle_input(
         }
     }
 
-    if keys.just_pressed(KeyCode::Equal) || keys.just_pressed(KeyCode::ArrowUp) {
+    if (keys.just_pressed(KeyCode::Equal) || keys.just_pressed(KeyCode::ArrowUp)) && !state.low_fps {
         spawn_units(&mut commands, &assets, &mut state, 500);
     }
 
@@ -940,6 +1086,46 @@ pub fn handle_input(
                 commands.entity(entity).despawn();
                 to_remove -= 1;
                 state.unit_count -= 1;
+            }
+        }
+    }
+
+    if state.cursor_mode == CursorMode::Spawn
+        && (mouse.pressed(MouseButton::Left) || mouse.pressed(MouseButton::Right))
+    {
+        let over_ui = ui.buttons.iter().any(|(i, ..)| *i != Interaction::None)
+            || ui.panel_interactions.iter().any(|i| *i != Interaction::None);
+        if !over_ui
+            && let Some(world_pos) = ui
+                .windows
+                .single()
+                .ok()
+                .and_then(|w| w.cursor_position())
+                .and_then(|cursor_pos| {
+                    ui.camera_q
+                        .single()
+                        .ok()
+                        .and_then(|(cam, cam_tf)| cam.viewport_to_world_2d(cam_tf, cursor_pos).ok())
+                })
+        {
+            if mouse.pressed(MouseButton::Left) && !state.low_fps {
+                let count = state.spawn_amount;
+                let spread = (state.unit_radius * 3.5 + count as f32 * 0.45).max(16.0);
+                spawn_units_at(&mut commands, &assets, &mut state, world_pos, count, spread);
+            } else if mouse.pressed(MouseButton::Right) && state.unit_count > 0 {
+                let brush_r_sq =
+                    ((state.unit_radius * 6.0).max(24.0) + state.spawn_amount as f32 * 1.2).powi(2);
+                let mut remaining = state.spawn_amount;
+                for (entity, unit, _, _, _) in &units {
+                    if remaining == 0 {
+                        break;
+                    }
+                    if (unit.pos - world_pos).length_squared() <= brush_r_sq {
+                        commands.entity(entity).despawn();
+                        state.unit_count = state.unit_count.saturating_sub(1);
+                        remaining -= 1;
+                    }
+                }
             }
         }
     }
@@ -977,13 +1163,29 @@ pub fn handle_input(
 
 pub fn update_hud(
     diagnostics: Res<DiagnosticsStore>,
-    state: Res<SimState>,
+    time: Res<Time>,
+    mut state: ResMut<SimState>,
     mut q: Query<&mut Text, With<HudText>>,
+    mut banner_q: Query<&mut Node, With<LowFpsBanner>>,
 ) {
-    let fps = diagnostics
+    let smoothed_fps = diagnostics
         .get(&FrameTimeDiagnosticsPlugin::FPS)
-        .and_then(|d| d.smoothed())
-        .unwrap_or(0.0);
+        .and_then(|d| d.smoothed());
+    let fps = smoothed_fps.unwrap_or(0.0);
+
+    if time.elapsed_secs() > 1.0
+        && let Some(val) = smoothed_fps
+    {
+        state.low_fps = val < 10.0;
+    }
+
+    for mut node in &mut banner_q {
+        node.display = if state.low_fps {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
 
     let mode = if state.water_mode {
         "LIQUID MODE"
@@ -994,7 +1196,7 @@ pub fn update_hud(
     for mut text in &mut q {
         **text = format!(
             "MIZU  |  {mode}  |  {} units  |  {fps:.0} FPS  |  {status}\n\
-             W: View   L/R-Drag: Repel/Attract   [/] Scroll: Force   +/-: ±500   Space: Pause   R: Reset   Tab: Visuals",
+             W: View   C: Cursor   L/R-Drag: Repel/Attract or Add/Del   [/] Scroll: Force/Amt   +/-: ±500   Space: Pause   R: Reset   Tab: Visuals",
             state.unit_count
         );
     }
