@@ -594,7 +594,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                 spawn_stepper_row(
                     panel,
                     "Direction",
-                    "Down",
+                    "S",
                     libron.clone(),
                     UiAction::GravityDirPrev,
                     UiAction::GravityDirNext,

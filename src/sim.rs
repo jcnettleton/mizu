@@ -101,40 +101,40 @@ impl ContainerShape {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GravityDirection {
     #[default]
-    Down,
-    DownRight,
-    Right,
-    UpRight,
-    Up,
-    UpLeft,
-    Left,
-    DownLeft,
+    South,
+    SouthEast,
+    East,
+    NorthEast,
+    North,
+    NorthWest,
+    West,
+    SouthWest,
     Center,
 }
 
 impl GravityDirection {
     pub const ALL: [Self; 9] = [
-        Self::Down,
-        Self::DownRight,
-        Self::Right,
-        Self::UpRight,
-        Self::Up,
-        Self::UpLeft,
-        Self::Left,
-        Self::DownLeft,
+        Self::South,
+        Self::SouthEast,
+        Self::East,
+        Self::NorthEast,
+        Self::North,
+        Self::NorthWest,
+        Self::West,
+        Self::SouthWest,
         Self::Center,
     ];
 
     pub fn name(self) -> &'static str {
         match self {
-            Self::Down => "Down",
-            Self::DownRight => "SE",
-            Self::Right => "Right",
-            Self::UpRight => "NE",
-            Self::Up => "Up",
-            Self::UpLeft => "NW",
-            Self::Left => "Left",
-            Self::DownLeft => "SW",
+            Self::South => "S",
+            Self::SouthEast => "SE",
+            Self::East => "E",
+            Self::NorthEast => "NE",
+            Self::North => "N",
+            Self::NorthWest => "NW",
+            Self::West => "W",
+            Self::SouthWest => "SW",
             Self::Center => "Center",
         }
     }
@@ -153,14 +153,14 @@ impl GravityDirection {
     pub fn dir_at(self, pos: Vec2) -> Vec2 {
         const DIAG: f32 = std::f32::consts::FRAC_1_SQRT_2;
         match self {
-            Self::Down => Vec2::new(0.0, -1.0),
-            Self::DownRight => Vec2::new(DIAG, -DIAG),
-            Self::Right => Vec2::new(1.0, 0.0),
-            Self::UpRight => Vec2::new(DIAG, DIAG),
-            Self::Up => Vec2::new(0.0, 1.0),
-            Self::UpLeft => Vec2::new(-DIAG, DIAG),
-            Self::Left => Vec2::new(-1.0, 0.0),
-            Self::DownLeft => Vec2::new(-DIAG, -DIAG),
+            Self::South => Vec2::new(0.0, -1.0),
+            Self::SouthEast => Vec2::new(DIAG, -DIAG),
+            Self::East => Vec2::new(1.0, 0.0),
+            Self::NorthEast => Vec2::new(DIAG, DIAG),
+            Self::North => Vec2::new(0.0, 1.0),
+            Self::NorthWest => Vec2::new(-DIAG, DIAG),
+            Self::West => Vec2::new(-1.0, 0.0),
+            Self::SouthWest => Vec2::new(-DIAG, -DIAG),
             Self::Center => {
                 if pos.length_squared() > 1.0 {
                     -pos.normalize()
