@@ -31,29 +31,6 @@ const TEXT_PRIMARY: Color = Color::srgb(0.92, 0.96, 1.0);
 const TEXT_MUTED: Color = Color::srgba(0.72, 0.82, 0.94, 0.88);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum FontChoice {
-    #[default]
-    Libron,
-    Default,
-}
-
-impl FontChoice {
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Libron => "Libron",
-            Self::Default => "Default",
-        }
-    }
-
-    pub fn toggle(self) -> Self {
-        match self {
-            Self::Libron => Self::Default,
-            Self::Default => Self::Libron,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WindowModeChoice {
     #[default]
     Windowed,
@@ -147,16 +124,10 @@ impl ResolutionPreset {
     }
 }
 
-#[derive(Resource)]
-pub struct UiFonts {
-    pub libron: Handle<Font>,
-}
-
 #[derive(Resource, Default)]
 pub struct UiState {
     pub palette: WaterPalette,
     pub shader_panel_open: bool,
-    pub font_choice: FontChoice,
     pub ui_hidden: bool,
     pub zen_hint_timer: f32,
     pub pause_menu_open: bool,
@@ -216,7 +187,6 @@ pub enum UiAction {
     ToggleGradientReverse,
     RampPrev,
     RampNext,
-    ToggleFont,
     ResetShader,
     ToggleHideUi,
     ClosePauseMenu,
@@ -244,7 +214,6 @@ pub enum UiLabel {
     Gradient,
     GradientReverse,
     Ramp,
-    Font,
     WindowMode,
     Resolution,
 }
@@ -347,9 +316,6 @@ fn spawn_stepper_row(
 
 pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
     let libron: Handle<Font> = asset_server.load("fonts/Libron/Libron-Regular.ttf");
-    commands.insert_resource(UiFonts {
-        libron: libron.clone(),
-    });
 
     // Top-left HUD card
     commands
@@ -599,18 +565,6 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                     ">",
                 );
 
-                spawn_stepper_row(
-                    panel,
-                    "Font",
-                    "Libron",
-                    libron.clone(),
-                    UiAction::ToggleFont,
-                    UiAction::ToggleFont,
-                    UiLabel::Font,
-                    "<",
-                    ">",
-                );
-
                 panel.spawn((
                     Text::new("GRAVITY"),
                     TextFont {
@@ -691,6 +645,45 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                         );
                     });
             });
+        });
+
+    // Bottom keybind hint bar (hidden in Zen mode)
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                bottom: Val::Px(12.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            ZenHideable,
+        ))
+        .with_children(|wrapper| {
+            wrapper
+                .spawn((
+                    Node {
+                        padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        border_radius: BorderRadius::all(Val::Px(8.0)),
+                        ..default()
+                    },
+                    BorderColor::all(PANEL_BORDER),
+                    BackgroundColor(PANEL_BG),
+                    Interaction::None,
+                ))
+                .with_children(|bar| {
+                    bar.spawn((
+                        Text::new("W: View  |  C: Cursor  |  L/R-Drag: Force / Add-Del  |  [/] Scroll: Force/Amt  |  +/-: ±500  |  Space: Pause  |  R: Reset  |  Tab: Visuals  |  H: Hide  |  Esc: Menu"),
+                        TextFont {
+                            font: libron.clone(),
+                            font_size: 12.5,
+                            ..default()
+                        },
+                        TextColor(TEXT_MUTED),
+                    ));
+                });
         });
 
     // Centered low-FPS warning banner (hidden by default)
@@ -911,7 +904,6 @@ pub struct UiQueries<'w, 's> {
             &'static mut BorderColor,
         ),
     >,
-    text_fonts: Query<'w, 's, &'static mut TextFont>,
     labels: Query<'w, 's, (&'static UiLabel, &'static mut Text)>,
 }
 
@@ -921,7 +913,6 @@ pub fn handle_input(
     mouse: Res<ButtonInput<MouseButton>>,
     scroll: Res<AccumulatedMouseScroll>,
     assets: Res<UnitAssets>,
-    ui_fonts: Res<UiFonts>,
     mut state: ResMut<SimState>,
     mut ui_state: ResMut<UiState>,
     mut grid: ResMut<SpatialGrid>,
@@ -984,7 +975,6 @@ pub fn handle_input(
     let mut gravity_dirty = false;
     let mut motion_dirty = false;
     let mut container_dirty = false;
-    let mut font_toggled = false;
     let mut window_mode_dirty = false;
     let mut resolution_dirty = false;
 
@@ -1116,10 +1106,6 @@ pub fn handle_input(
                 UiAction::RampNext => {
                     state.color_ramp = state.color_ramp.next();
                     colors_dirty = true;
-                }
-                UiAction::ToggleFont => {
-                    ui_state.font_choice = ui_state.font_choice.toggle();
-                    font_toggled = true;
                 }
                 UiAction::ResetShader => {
                     ui_state.palette = WaterPalette::Ocean;
@@ -1276,16 +1262,6 @@ pub fn handle_input(
         state.cursor_mode = state.cursor_mode.toggle();
     }
 
-    if font_toggled {
-        let new_font = match ui_state.font_choice {
-            FontChoice::Libron => ui_fonts.libron.clone(),
-            FontChoice::Default => Handle::default(),
-        };
-        for mut tf in &mut ui.text_fonts {
-            tf.font = new_font.clone();
-        }
-    }
-
     if size_dirty {
         grid.rebuild(ARENA_HALF_W, ARENA_HALF_H, grid_cell_size(state.unit_radius));
         let new_size = state.unit_sprite_size();
@@ -1318,7 +1294,6 @@ pub fn handle_input(
         || size_dirty
         || colors_dirty
         || panel_toggled
-        || font_toggled
         || window_mode_dirty
         || resolution_dirty
     {
@@ -1391,9 +1366,6 @@ pub fn handle_input(
                 }
                 UiLabel::Ramp => {
                     **text = state.color_ramp.name().to_string();
-                }
-                UiLabel::Font => {
-                    **text = ui_state.font_choice.name().to_string();
                 }
                 UiLabel::WindowMode => {
                     **text = ui_state.window_mode.name().to_string();
@@ -1589,8 +1561,7 @@ pub fn update_hud(
     let status = if state.paused { "PAUSED" } else { "RUNNING" };
     for mut text in &mut q {
         **text = format!(
-            "MIZU  |  {mode}  |  {} units  |  {fps:.0} FPS  |  {status}\n\
-             W: View   C: Cursor   L/R-Drag: Repel/Attract or Add/Del   [/] Scroll: Force/Amt   +/-: ±500   Space: Pause   R: Reset   Tab: Visuals   H: Hide UI   Esc: Menu",
+            "MIZU  |  {mode}  |  {} units  |  {fps:.0} FPS  |  {status}",
             state.unit_count
         );
     }
