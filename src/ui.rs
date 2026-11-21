@@ -786,12 +786,12 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
             backdrop
                 .spawn((
                     Node {
-                        width: Val::Px(360.0),
-                        padding: UiRect::all(Val::Px(20.0)),
+                        width: Val::Px(700.0),
+                        padding: UiRect::all(Val::Px(24.0)),
                         border: UiRect::all(Val::Px(1.5)),
                         border_radius: BorderRadius::all(Val::Px(12.0)),
                         flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(12.0),
+                        row_gap: Val::Px(16.0),
                         ..default()
                     },
                     BorderColor::all(PANEL_BORDER),
@@ -799,70 +799,175 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                     Interaction::None,
                 ))
                 .with_children(|modal| {
-                    modal.spawn((
-                        Text::new("PAUSED"),
-                        TextFont {
-                            font: libron.clone(),
-                            font_size: 20.0,
-                            ..default()
-                        },
-                        TextColor(TEXT_PRIMARY),
-                    ));
-
-                    modal.spawn((
-                        Text::new("DISPLAY"),
-                        TextFont {
-                            font: libron.clone(),
-                            font_size: 13.0,
-                            ..default()
-                        },
-                        TextColor(TEXT_MUTED),
-                        Node {
-                            margin: UiRect::top(Val::Px(4.0)),
-                            ..default()
-                        },
-                    ));
-
-                    spawn_stepper_row(
-                        modal,
-                        "Window Mode",
-                        "Windowed",
-                        libron.clone(),
-                        UiAction::WindowModePrev,
-                        UiAction::WindowModeNext,
-                        UiLabel::WindowMode,
-                        "<",
-                        ">",
-                    );
-
-                    spawn_stepper_row(
-                        modal,
-                        "Resolution",
-                        "1280×720 (16:9)",
-                        libron.clone(),
-                        UiAction::ResolutionPrev,
-                        UiAction::ResolutionNext,
-                        UiLabel::Resolution,
-                        "<",
-                        ">",
-                    );
-
+                    // Header: MIZU + PAUSED subtitle
                     modal
                         .spawn(Node {
                             width: Val::Percent(100.0),
-                            justify_content: JustifyContent::End,
-                            margin: UiRect::top(Val::Px(8.0)),
+                            justify_content: JustifyContent::SpaceBetween,
+                            align_items: AlignItems::Baseline,
                             ..default()
                         })
-                        .with_children(|footer| {
-                            spawn_pill_button(
-                                footer,
-                                "Resume (Esc)",
-                                libron,
-                                UiAction::ClosePauseMenu,
-                                None,
-                                16.0,
-                            );
+                        .with_children(|header| {
+                            header.spawn((
+                                Text::new("MIZU"),
+                                TextFont {
+                                    font: libron.clone(),
+                                    font_size: 32.0,
+                                    ..default()
+                                },
+                                TextColor(TEXT_PRIMARY),
+                            ));
+                            header.spawn((
+                                Text::new("PAUSED"),
+                                TextFont {
+                                    font: libron.clone(),
+                                    font_size: 13.0,
+                                    ..default()
+                                },
+                                TextColor(TEXT_MUTED),
+                            ));
+                        });
+
+                    // Horizontal divider below header
+                    modal.spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            height: Val::Px(1.0),
+                            ..default()
+                        },
+                        BackgroundColor(PANEL_BORDER),
+                    ));
+
+                    // Two-column body: description (left) | divider | display controls (right)
+                    modal
+                        .spawn(Node {
+                            width: Val::Percent(100.0),
+                            flex_direction: FlexDirection::Row,
+                            column_gap: Val::Px(20.0),
+                            align_items: AlignItems::Stretch,
+                            ..default()
+                        })
+                        .with_children(|body| {
+                            // Left column: about Mizu
+                            body.spawn(Node {
+                                flex_basis: Val::Px(0.0),
+                                flex_grow: 1.05,
+                                flex_direction: FlexDirection::Column,
+                                row_gap: Val::Px(10.0),
+                                justify_content: JustifyContent::Center,
+                                ..default()
+                            })
+                            .with_children(|about| {
+                                about.spawn((
+                                    Text::new("Mizu is a game with no objective—no achievements, no quests, no story. It's simply about enjoying something that doesn't ask anything of you."),
+                                    TextFont {
+                                        font: libron.clone(),
+                                        font_size: 13.5,
+                                        ..default()
+                                    },
+                                    TextColor(TEXT_MUTED),
+                                ));
+                                about.spawn((
+                                    Text::new("Best enjoyed with your favorite music playing in the background, or to help keep focus while listening to something memorable."),
+                                    TextFont {
+                                        font: libron.clone(),
+                                        font_size: 13.5,
+                                        ..default()
+                                    },
+                                    TextColor(TEXT_MUTED),
+                                ));
+                                about.spawn((
+                                    Text::new("So slow down, calm down, and enjoy your time with the particles."),
+                                    TextFont {
+                                        font: libron.clone(),
+                                        font_size: 13.5,
+                                        ..default()
+                                    },
+                                    TextColor(TEXT_PRIMARY),
+                                ));
+                            });
+
+                            // Vertical divider
+                            body.spawn((
+                                Node {
+                                    width: Val::Px(1.0),
+                                    align_self: AlignSelf::Stretch,
+                                    ..default()
+                                },
+                                BackgroundColor(PANEL_BORDER),
+                            ));
+
+                            // Right column: display settings & resume
+                            body.spawn(Node {
+                                flex_basis: Val::Px(0.0),
+                                flex_grow: 1.0,
+                                flex_direction: FlexDirection::Column,
+                                row_gap: Val::Px(12.0),
+                                justify_content: JustifyContent::SpaceBetween,
+                                ..default()
+                            })
+                            .with_children(|controls| {
+                                controls
+                                    .spawn(Node {
+                                        width: Val::Percent(100.0),
+                                        flex_direction: FlexDirection::Column,
+                                        row_gap: Val::Px(12.0),
+                                        ..default()
+                                    })
+                                    .with_children(|settings| {
+                                        settings.spawn((
+                                            Text::new("DISPLAY"),
+                                            TextFont {
+                                                font: libron.clone(),
+                                                font_size: 13.0,
+                                                ..default()
+                                            },
+                                            TextColor(TEXT_MUTED),
+                                        ));
+
+                                        spawn_stepper_row(
+                                            settings,
+                                            "Window Mode",
+                                            "Windowed",
+                                            libron.clone(),
+                                            UiAction::WindowModePrev,
+                                            UiAction::WindowModeNext,
+                                            UiLabel::WindowMode,
+                                            "<",
+                                            ">",
+                                        );
+
+                                        spawn_stepper_row(
+                                            settings,
+                                            "Resolution",
+                                            "1280×720 (16:9)",
+                                            libron.clone(),
+                                            UiAction::ResolutionPrev,
+                                            UiAction::ResolutionNext,
+                                            UiLabel::Resolution,
+                                            "<",
+                                            ">",
+                                        );
+                                    });
+
+                                controls
+                                    .spawn(Node {
+                                        width: Val::Percent(100.0),
+                                        justify_content: JustifyContent::End,
+                                        margin: UiRect::top(Val::Px(8.0)),
+                                        ..default()
+                                    })
+                                    .with_children(|footer| {
+                                        spawn_pill_button(
+                                            footer,
+                                            "Resume (Esc)",
+                                            libron,
+                                            UiAction::ClosePauseMenu,
+                                            None,
+                                            16.0,
+                                        );
+                                    });
+                            });
                         });
                 });
         });
