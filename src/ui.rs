@@ -446,7 +446,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
             ))
             .with_children(|panel| {
                 panel.spawn((
-                    Text::new("LIQUID MODE"),
+                    Text::new("LIQUID"),
                     TextFont {
                         font: libron.clone(),
                         font_size: 13.0,
@@ -1659,7 +1659,7 @@ pub fn update_hud(
     }
 
     let mode = if state.water_mode {
-        "LIQUID MODE"
+        "LIQUID"
     } else {
         "PARTICLES"
     };
