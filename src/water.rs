@@ -10,7 +10,7 @@ use bevy::{
     sprite_render::{AlphaMode2d, Material2d},
 };
 
-use crate::sim::{ARENA_HALF_H, ARENA_HALF_W, SimState};
+use crate::sim::{ARENA_HALF_H, ARENA_HALF_W, ContainerShape, SimState};
 
 pub const RT_WIDTH: u32 = 1280;
 pub const RT_HEIGHT: u32 = 720;
@@ -20,7 +20,23 @@ pub struct UnitAssets {
     pub circle_texture: Handle<Image>,
     pub blob_texture: Handle<Image>,
     pub water_material: Handle<WaterMaterial>,
+    pub arena_meshes: [Handle<Mesh>; 4],
 }
+
+impl UnitAssets {
+    pub fn arena_mesh(&self, shape: ContainerShape) -> Handle<Mesh> {
+        let idx = match shape {
+            ContainerShape::Rectangle => 0,
+            ContainerShape::Circle => 1,
+            ContainerShape::Hexagon => 2,
+            ContainerShape::Triangle => 3,
+        };
+        self.arena_meshes[idx].clone()
+    }
+}
+
+#[derive(Component)]
+pub struct ArenaBackground;
 
 #[derive(Component)]
 pub struct WaterQuad;
@@ -226,6 +242,7 @@ pub fn setup_scene(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut color_materials: ResMut<Assets<ColorMaterial>>,
     mut water_materials: ResMut<Assets<WaterMaterial>>,
     mut state: ResMut<SimState>,
 ) {
@@ -262,17 +279,22 @@ pub fn setup_scene(
     ));
 
     // Arena border background (Layer 0)
+    let arena_meshes = [
+        meshes.add(Rectangle::new(
+            ARENA_HALF_W * 2.0 + 16.0,
+            ARENA_HALF_H * 2.0 + 16.0,
+        )),
+        meshes.add(Circle::new(ARENA_HALF_H + 8.0)),
+        meshes.add(RegularPolygon::new(ARENA_HALF_H + 8.0, 6)),
+        meshes.add(RegularPolygon::new(ARENA_HALF_H + 8.0, 3)),
+    ];
+    let arena_bg_mat = color_materials.add(Color::srgb(0.08, 0.10, 0.14));
     commands.spawn((
-        Sprite {
-            color: Color::srgb(0.08, 0.10, 0.14),
-            custom_size: Some(Vec2::new(
-                ARENA_HALF_W * 2.0 + 16.0,
-                ARENA_HALF_H * 2.0 + 16.0,
-            )),
-            ..default()
-        },
+        Mesh2d(arena_meshes[0].clone()),
+        MeshMaterial2d(arena_bg_mat),
         Transform::from_xyz(0.0, 0.0, -2.0),
         RenderLayers::layer(0),
+        ArenaBackground,
     ));
 
     // Full-arena water shader quad (Layer 0)
@@ -295,6 +317,7 @@ pub fn setup_scene(
         circle_texture,
         blob_texture,
         water_material,
+        arena_meshes,
     };
 
     crate::sim::spawn_units(&mut commands, &assets, &mut state, crate::sim::INITIAL_UNITS);

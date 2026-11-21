@@ -90,26 +90,26 @@
 
 ---
 
-## Phase 5 — Container Shapes
+## Phase 5 — Container Shapes (Done)
 
-- [ ] **5A: Container shape system (Circle, Rounded Rect, Triangle, Hexagon)**
+- [x] **5A: Container shape system (Circle, Rounded Rect, Triangle, Hexagon)**
   - **Files:** `src/sim.rs` (or `src/main.rs`), `src/ui.rs`
   - **Scope:** Add a `ContainerShape` enum (`Rectangle`, `Circle`, `Hexagon`, `Triangle`) in `SimState` with a UI cycle button. Replace the AABB wall clamping in `step_simulation` with shape-specific boundary distance + normal reflection (e.g., radial clamp for `Circle`, half-plane / polygon edge SDF for `Hexagon` and `Triangle`). Update the background arena border visual (using `Mesh2d` or gizmos) to match the active container shape.
   - **Acceptance:** Cycling container shapes updates both the rendered arena boundary and particle/water collisions smoothly.
 
 ---
 
-## Phase 6 — Visuals, Liquid Mode & Naming Polish
+## Phase 6 — Visuals, Liquid Mode & Naming Polish (Done)
 
-- [ ] **6A: Rename Water Shader & Shader Tab to Liquid Mode & Visuals**
+- [x] **6A: Rename Water Shader & Shader Tab to Liquid Mode & Visuals**
   - **Files:** `src/ui.rs`, `src/water.rs`, `src/sim.rs`
   - **Scope:** Rename user-facing `"Water"` / `"Water Shader"` labels to `"Liquid"` / `"Liquid Mode"` (e.g., HUD mode indicator and view toggle), and rename the `"Shader (Tab)"` button and panel header to `"Visuals (Tab)"` (or `"Style (Tab)"`) so it reflects that the panel controls both liquid effects and particle visuals.
   - **Acceptance:** All UI labels, HUD hints, and tab buttons use `"Liquid"` and `"Visuals (Tab)"` consistently.
-- [ ] **6B: Lower minimum particle size to `1.5` & add gradient reverse toggle**
+- [x] **6B: Lower minimum particle size to `1.5` & add gradient reverse toggle**
   - **Files:** `src/sim.rs`, `src/ui.rs`
   - **Scope:** Lower `MIN_UNIT_RADIUS` from `2.5` to `1.5` (and verify `grid_cell_size` and sprite sizing work cleanly at `1.5`). Add a `gradient_reversed: bool` field to `SimState` with a `Reverse` / `Invert` toggle button in the Visuals panel that flips `t` (`1.0 - t`) in `particle_gradient_color` so every gradient supports both dark-to-light and light-to-dark.
   - **Acceptance:** Particle size can be stepped down to `1.5`, and toggling gradient reverse immediately flips the color ramp direction in Particle mode.
-- [ ] **6C: Boost Liquid Mode visual impact & parameter responsiveness**
+- [x] **6C: Boost Liquid Mode visual impact & parameter responsiveness**
   - **Files:** `assets/shaders/water.wgsl`, `src/water.rs`, `src/ui.rs`
   - **Scope:** Tune `water.wgsl` and `WaterParams` defaults/ranges/step sizes so adjusting `threshold`, `foam_width`, and `shimmer` produces an unmistakable, dramatic visual change (stronger surface-tension rim/foam contrast, more visible wave/shimmer distortion, and wider effective parameter ranges).
   - **Acceptance:** Stepping `Threshold`, `Foam`, or `Shimmer` in Liquid mode produces clear, dramatic visual differences on screen.

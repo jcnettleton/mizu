@@ -8,13 +8,14 @@ use bevy::{
 use std::f32::consts::TAU;
 
 use crate::sim::{
-    ARENA_HALF_H, ARENA_HALF_W, DEFAULT_GRAVITY_STRENGTH, DEFAULT_UNIT_RADIUS, GravityDirection,
-    MAX_GRAVITY_STRENGTH, MAX_UNIT_RADIUS, MIN_GRAVITY_STRENGTH, MIN_UNIT_RADIUS,
+    ARENA_HALF_H, ARENA_HALF_W, ContainerShape, DEFAULT_GRAVITY_STRENGTH, DEFAULT_UNIT_RADIUS,
+    GravityDirection, MAX_GRAVITY_STRENGTH, MAX_UNIT_RADIUS, MIN_GRAVITY_STRENGTH, MIN_UNIT_RADIUS,
     ParticleColorRamp, ParticleGradientMode, SimState, SpatialGrid, Unit, grid_cell_size,
     particle_color, particle_color_with, spawn_units,
 };
 use crate::water::{
-    OffscreenCamera, UnitAssets, WaterMaterial, WaterPalette, WaterParams, WaterQuad,
+    ArenaBackground, OffscreenCamera, UnitAssets, WaterMaterial, WaterPalette, WaterParams,
+    WaterQuad,
 };
 
 const PANEL_BG: Color = Color::srgba(0.06, 0.08, 0.13, 0.86);
@@ -77,6 +78,8 @@ pub enum UiAction {
     GravityStrengthUp,
     GravityDirPrev,
     GravityDirNext,
+    ContainerPrev,
+    ContainerNext,
     ToggleShaderPanel,
     PalettePrev,
     PaletteNext,
@@ -90,6 +93,7 @@ pub enum UiAction {
     SizeUp,
     GradientPrev,
     GradientNext,
+    ToggleGradientReverse,
     RampPrev,
     RampNext,
     ToggleFont,
@@ -102,6 +106,7 @@ pub enum UiLabel {
     Gravity,
     GravityStrength,
     GravityDir,
+    Container,
     ShaderPanelBtn,
     Palette,
     Threshold,
@@ -109,6 +114,7 @@ pub enum UiLabel {
     Shimmer,
     Size,
     Gradient,
+    GradientReverse,
     Ramp,
     Font,
 }
@@ -295,7 +301,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
 
                 spawn_pill_button(
                     row,
-                    "Shader (Tab)",
+                    "Visuals (Tab)",
                     libron.clone(),
                     UiAction::ToggleShaderPanel,
                     Some(UiLabel::ShaderPanelBtn),
@@ -322,7 +328,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
             ))
             .with_children(|panel| {
                 panel.spawn((
-                    Text::new("WATER SHADER"),
+                    Text::new("LIQUID MODE"),
                     TextFont {
                         font: libron.clone(),
                         font_size: 13.0,
@@ -431,6 +437,18 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
 
                 spawn_stepper_row(
                     panel,
+                    "Invert",
+                    "OFF",
+                    libron.clone(),
+                    UiAction::ToggleGradientReverse,
+                    UiAction::ToggleGradientReverse,
+                    UiLabel::GradientReverse,
+                    "<",
+                    ">",
+                );
+
+                spawn_stepper_row(
+                    panel,
                     "Font",
                     "Libron",
                     libron.clone(),
@@ -479,6 +497,18 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                     ">",
                 );
 
+                spawn_stepper_row(
+                    panel,
+                    "Shape",
+                    "Rectangle",
+                    libron.clone(),
+                    UiAction::ContainerPrev,
+                    UiAction::ContainerNext,
+                    UiLabel::Container,
+                    "<",
+                    ">",
+                );
+
                 panel
                     .spawn(Node {
                         width: Val::Percent(100.0),
@@ -502,6 +532,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
 
 #[derive(SystemParam)]
 pub struct UiQueries<'w, 's> {
+    arena_bg: Query<'w, 's, &'static mut Mesh2d, With<ArenaBackground>>,
     water_quad: Query<'w, 's, &'static mut Visibility, With<WaterQuad>>,
     offscreen_cam: Query<'w, 's, &'static mut Camera, With<OffscreenCamera>>,
     shader_panel: Query<'w, 's, &'static mut Node, With<ShaderPanel>>,
@@ -560,6 +591,7 @@ pub fn handle_input(
     let mut size_dirty = false;
     let mut colors_dirty = false;
     let mut gravity_dirty = false;
+    let mut container_dirty = false;
     let mut font_toggled = false;
 
     for (interaction, action, mut bg, mut border) in &mut ui.buttons {
@@ -587,6 +619,14 @@ pub fn handle_input(
                     state.gravity_direction = state.gravity_direction.next();
                     gravity_dirty = true;
                 }
+                UiAction::ContainerPrev => {
+                    state.container_shape = state.container_shape.prev();
+                    container_dirty = true;
+                }
+                UiAction::ContainerNext => {
+                    state.container_shape = state.container_shape.next();
+                    container_dirty = true;
+                }
                 UiAction::ToggleShaderPanel => panel_toggled = true,
                 UiAction::PalettePrev => {
                     ui_state.palette = ui_state.palette.prev();
@@ -598,37 +638,37 @@ pub fn handle_input(
                 }
                 UiAction::ThresholdDown => {
                     if let Some(mat) = water_materials.get_mut(&assets.water_material) {
-                        mat.params.threshold = (mat.params.threshold - 0.02).clamp(0.05, 0.40);
+                        mat.params.threshold = (mat.params.threshold - 0.04).clamp(0.04, 0.44);
                         shader_dirty = true;
                     }
                 }
                 UiAction::ThresholdUp => {
                     if let Some(mat) = water_materials.get_mut(&assets.water_material) {
-                        mat.params.threshold = (mat.params.threshold + 0.02).clamp(0.05, 0.40);
+                        mat.params.threshold = (mat.params.threshold + 0.04).clamp(0.04, 0.44);
                         shader_dirty = true;
                     }
                 }
                 UiAction::FoamDown => {
                     if let Some(mat) = water_materials.get_mut(&assets.water_material) {
-                        mat.params.foam_width = (mat.params.foam_width - 0.01).clamp(0.0, 0.20);
+                        mat.params.foam_width = (mat.params.foam_width - 0.03).clamp(0.0, 0.27);
                         shader_dirty = true;
                     }
                 }
                 UiAction::FoamUp => {
                     if let Some(mat) = water_materials.get_mut(&assets.water_material) {
-                        mat.params.foam_width = (mat.params.foam_width + 0.01).clamp(0.0, 0.20);
+                        mat.params.foam_width = (mat.params.foam_width + 0.03).clamp(0.0, 0.27);
                         shader_dirty = true;
                     }
                 }
                 UiAction::ShimmerDown => {
                     if let Some(mat) = water_materials.get_mut(&assets.water_material) {
-                        mat.params.shimmer = (mat.params.shimmer - 0.25).clamp(0.0, 2.50);
+                        mat.params.shimmer = (mat.params.shimmer - 0.50).clamp(0.0, 3.00);
                         shader_dirty = true;
                     }
                 }
                 UiAction::ShimmerUp => {
                     if let Some(mat) = water_materials.get_mut(&assets.water_material) {
-                        mat.params.shimmer = (mat.params.shimmer + 0.25).clamp(0.0, 2.50);
+                        mat.params.shimmer = (mat.params.shimmer + 0.50).clamp(0.0, 3.00);
                         shader_dirty = true;
                     }
                 }
@@ -648,6 +688,10 @@ pub fn handle_input(
                 }
                 UiAction::GradientNext => {
                     state.gradient_mode = state.gradient_mode.next();
+                    colors_dirty = true;
+                }
+                UiAction::ToggleGradientReverse => {
+                    state.gradient_reversed = !state.gradient_reversed;
                     colors_dirty = true;
                 }
                 UiAction::RampPrev => {
@@ -673,13 +717,16 @@ pub fn handle_input(
                     }
                     state.unit_radius = DEFAULT_UNIT_RADIUS;
                     state.gradient_mode = ParticleGradientMode::default();
+                    state.gradient_reversed = false;
                     state.color_ramp = ParticleColorRamp::default();
                     state.gravity_strength = DEFAULT_GRAVITY_STRENGTH;
                     state.gravity_direction = GravityDirection::default();
+                    state.container_shape = ContainerShape::default();
                     shader_dirty = true;
                     size_dirty = true;
                     colors_dirty = true;
                     gravity_dirty = true;
+                    container_dirty = true;
                 }
             }
         }
@@ -755,9 +802,17 @@ pub fn handle_input(
         }
     }
 
+    if container_dirty {
+        let new_mesh = assets.arena_mesh(state.container_shape);
+        for mut mesh2d in &mut ui.arena_bg {
+            mesh2d.0 = new_mesh.clone();
+        }
+    }
+
     if force_delta != 0.0
         || gravity_toggled
         || gravity_dirty
+        || container_dirty
         || shader_dirty
         || size_dirty
         || colors_dirty
@@ -787,11 +842,14 @@ pub fn handle_input(
                 UiLabel::GravityDir => {
                     **text = state.gravity_direction.name().to_string();
                 }
+                UiLabel::Container => {
+                    **text = state.container_shape.name().to_string();
+                }
                 UiLabel::ShaderPanelBtn => {
                     **text = if ui_state.shader_panel_open {
-                        "Shader (Tab) ▲".to_string()
+                        "Visuals (Tab) ▲".to_string()
                     } else {
-                        "Shader (Tab)".to_string()
+                        "Visuals (Tab)".to_string()
                     };
                 }
                 UiLabel::Palette => {
@@ -811,6 +869,13 @@ pub fn handle_input(
                 }
                 UiLabel::Gradient => {
                     **text = state.gradient_mode.name().to_string();
+                }
+                UiLabel::GradientReverse => {
+                    **text = if state.gradient_reversed {
+                        "ON".to_string()
+                    } else {
+                        "OFF".to_string()
+                    };
                 }
                 UiLabel::Ramp => {
                     **text = state.color_ramp.name().to_string();
@@ -881,19 +946,20 @@ pub fn handle_input(
 
     if keys.just_pressed(KeyCode::KeyR) {
         let radius = state.unit_radius;
+        let shape = state.container_shape;
         let water_mode = state.water_mode;
         let gradient_mode = state.gradient_mode;
+        let gradient_reversed = state.gradient_reversed;
         let color_ramp = state.color_ramp;
         for (_, mut unit, mut transform, mut sprite, _) in &mut units {
-            let x = (state.next_f32() * 2.0 - 1.0) * (ARENA_HALF_W - radius);
-            let y = (state.next_f32() * 2.0 - 1.0) * (ARENA_HALF_H - radius);
+            let pos = shape.random_point(&mut state, radius);
             let angle = state.next_f32() * TAU;
             let speed = 55.0 + state.next_f32() * 65.0;
-            unit.pos = Vec2::new(x, y);
+            unit.pos = pos;
             unit.vel = Vec2::new(angle.cos() * speed, angle.sin() * speed);
             unit.density = 0.0;
-            transform.translation.x = x;
-            transform.translation.y = y;
+            transform.translation.x = pos.x;
+            transform.translation.y = pos.y;
             if !water_mode {
                 sprite.color = particle_color_with(
                     unit.pos,
@@ -901,6 +967,7 @@ pub fn handle_input(
                     0.0,
                     unit.base_hue,
                     gradient_mode,
+                    gradient_reversed,
                     color_ramp,
                 );
             }
@@ -919,7 +986,7 @@ pub fn update_hud(
         .unwrap_or(0.0);
 
     let mode = if state.water_mode {
-        "WATER SHADER"
+        "LIQUID MODE"
     } else {
         "PARTICLES"
     };
@@ -927,7 +994,7 @@ pub fn update_hud(
     for mut text in &mut q {
         **text = format!(
             "MIZU  |  {mode}  |  {} units  |  {fps:.0} FPS  |  {status}\n\
-             W: View   L/R-Drag: Repel/Attract   [/] Scroll: Force   +/-: ±500   Space: Pause   R: Reset   Tab: Shader",
+             W: View   L/R-Drag: Repel/Attract   [/] Scroll: Force   +/-: ±500   Space: Pause   R: Reset   Tab: Visuals",
             state.unit_count
         );
     }

@@ -6,12 +6,93 @@ use crate::water::{OffscreenCamera, UnitAssets};
 pub const ARENA_HALF_W: f32 = 620.0;
 pub const ARENA_HALF_H: f32 = 340.0;
 pub const DEFAULT_UNIT_RADIUS: f32 = 4.0;
-pub const MIN_UNIT_RADIUS: f32 = 2.5;
+pub const MIN_UNIT_RADIUS: f32 = 1.5;
 pub const MAX_UNIT_RADIUS: f32 = 10.0;
 
 pub const DEFAULT_GRAVITY_STRENGTH: f32 = 520.0;
 pub const MIN_GRAVITY_STRENGTH: f32 = 100.0;
 pub const MAX_GRAVITY_STRENGTH: f32 = 1500.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ContainerShape {
+    #[default]
+    Rectangle,
+    Circle,
+    Hexagon,
+    Triangle,
+}
+
+impl ContainerShape {
+    pub const ALL: [Self; 4] = [Self::Rectangle, Self::Circle, Self::Hexagon, Self::Triangle];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Rectangle => "Rectangle",
+            Self::Circle => "Circle",
+            Self::Hexagon => "Hexagon",
+            Self::Triangle => "Triangle",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        let idx = Self::ALL.iter().position(|&s| s == self).unwrap_or(0);
+        Self::ALL[(idx + 1) % Self::ALL.len()]
+    }
+
+    pub fn prev(self) -> Self {
+        let idx = Self::ALL.iter().position(|&s| s == self).unwrap_or(0);
+        Self::ALL[(idx + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
+
+    pub fn contains(self, pos: Vec2, radius: f32) -> bool {
+        match self {
+            Self::Rectangle => {
+                pos.x.abs() <= ARENA_HALF_W - radius && pos.y.abs() <= ARENA_HALF_H - radius
+            }
+            Self::Circle => {
+                let max_r = ARENA_HALF_H - radius;
+                pos.length_squared() <= max_r * max_r
+            }
+            Self::Hexagon => Self::polygon_contains(pos, radius, 6),
+            Self::Triangle => Self::polygon_contains(pos, radius, 3),
+        }
+    }
+
+    fn polygon_contains(pos: Vec2, radius: f32, sides: usize) -> bool {
+        let step = TAU / sides as f32;
+        let apothem = ARENA_HALF_H * (std::f32::consts::PI / sides as f32).cos() - radius;
+        for k in 0..sides {
+            let angle = std::f32::consts::FRAC_PI_2 + (k as f32 + 0.5) * step;
+            let normal = Vec2::new(angle.cos(), angle.sin());
+            if pos.dot(normal) > apothem {
+                return false;
+            }
+        }
+        true
+    }
+
+    pub fn random_point(self, state: &mut SimState, radius: f32) -> Vec2 {
+        match self {
+            Self::Rectangle => {
+                let x = (state.next_f32() * 2.0 - 1.0) * (ARENA_HALF_W - radius);
+                let y = (state.next_f32() * 2.0 - 1.0) * (ARENA_HALF_H - radius);
+                Vec2::new(x, y)
+            }
+            Self::Circle | Self::Hexagon | Self::Triangle => {
+                let bound = (ARENA_HALF_H - radius).max(1.0);
+                for _ in 0..24 {
+                    let x = (state.next_f32() * 2.0 - 1.0) * bound;
+                    let y = (state.next_f32() * 2.0 - 1.0) * bound;
+                    let p = Vec2::new(x, y);
+                    if self.contains(p, radius) {
+                        return p;
+                    }
+                }
+                Vec2::ZERO
+            }
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GravityDirection {
@@ -267,9 +348,11 @@ pub struct SimState {
     pub gravity_enabled: bool,
     pub gravity_strength: f32,
     pub gravity_direction: GravityDirection,
+    pub container_shape: ContainerShape,
     pub force_strength: f32,
     pub unit_radius: f32,
     pub gradient_mode: ParticleGradientMode,
+    pub gradient_reversed: bool,
     pub color_ramp: ParticleColorRamp,
     pub unit_count: usize,
     pub rng_seed: u64,
@@ -283,9 +366,11 @@ impl Default for SimState {
             gravity_enabled: false,
             gravity_strength: DEFAULT_GRAVITY_STRENGTH,
             gravity_direction: GravityDirection::default(),
+            container_shape: ContainerShape::default(),
             force_strength: 900.0,
             unit_radius: DEFAULT_UNIT_RADIUS,
             gradient_mode: ParticleGradientMode::default(),
+            gradient_reversed: false,
             color_ramp: ParticleColorRamp::default(),
             unit_count: 0,
             rng_seed: 0x1234_5678_9abc_def0,
@@ -320,9 +405,10 @@ pub fn particle_color_with(
     density: f32,
     base_hue: f32,
     gradient_mode: ParticleGradientMode,
+    gradient_reversed: bool,
     color_ramp: ParticleColorRamp,
 ) -> Color {
-    let t = match gradient_mode {
+    let mut t = match gradient_mode {
         ParticleGradientMode::Speed => {
             let max_speed = if matches!(
                 color_ramp,
@@ -346,6 +432,10 @@ pub fn particle_color_with(
         }
         ParticleGradientMode::Flow => (vel.y.atan2(vel.x) / TAU + 0.5).clamp(0.0, 1.0),
     };
+
+    if gradient_reversed {
+        t = 1.0 - t;
+    }
 
     match color_ramp {
         ParticleColorRamp::Rainbow => Color::hsl(base_hue, 0.85, 0.48 + t * 0.25),
@@ -371,6 +461,7 @@ pub fn particle_color(
         density,
         base_hue,
         state.gradient_mode,
+        state.gradient_reversed,
         state.color_ramp,
     )
 }
@@ -460,14 +551,13 @@ pub fn spawn_units(
     };
 
     let radius = state.unit_radius;
+    let shape = state.container_shape;
     let mut batch = Vec::with_capacity(count);
     for _ in 0..count {
-        let x = (state.next_f32() * 2.0 - 1.0) * (ARENA_HALF_W - radius);
-        let y = (state.next_f32() * 2.0 - 1.0) * (ARENA_HALF_H - radius);
+        let pos = shape.random_point(state, radius);
         let angle = state.next_f32() * TAU;
         let speed = 55.0 + state.next_f32() * 65.0;
         let base_hue = state.next_f32() * 360.0;
-        let pos = Vec2::new(x, y);
         let vel = Vec2::new(angle.cos() * speed, angle.sin() * speed);
 
         let color = if state.water_mode {
@@ -483,7 +573,7 @@ pub fn spawn_units(
                 custom_size: Some(size),
                 ..default()
             },
-            Transform::from_xyz(x, y, 0.0),
+            Transform::from_xyz(pos.x, pos.y, 0.0),
             layer.clone(),
             Unit {
                 pos,
@@ -551,10 +641,35 @@ pub fn step_simulation(
     let max_x = ARENA_HALF_W - radius;
     let min_y = -ARENA_HALF_H + radius;
     let max_y = ARENA_HALF_H - radius;
+    let circle_max_r = (ARENA_HALF_H - radius).max(1.0);
 
     let gravity_enabled = state.gravity_enabled;
     let gravity_strength = state.gravity_strength;
     let gravity_direction = state.gravity_direction;
+    let container_shape = state.container_shape;
+
+    #[inline]
+    fn resolve_wall(
+        pos: &mut Vec2,
+        vel: &mut Vec2,
+        outward_normal: Vec2,
+        penetration: f32,
+        gravity_enabled: bool,
+        g_dir: Vec2,
+        default_bounce: f32,
+    ) {
+        *pos -= outward_normal * penetration;
+        let vn = vel.dot(outward_normal);
+        if vn > 0.0 {
+            let is_floor = gravity_enabled && g_dir.dot(outward_normal) > 0.25;
+            let bounce = if is_floor { 0.30 } else { default_bounce };
+            let mut tangent = *vel - outward_normal * vn;
+            if is_floor {
+                tangent *= 0.985;
+            }
+            *vel = tangent - outward_normal * (vn * bounce);
+        }
+    }
 
     for (pos, vel) in &mut data {
         let g_dir = if gravity_enabled {
@@ -591,35 +706,42 @@ pub fn step_simulation(
         *pos += *vel * dt;
 
         let default_bounce = if gravity_enabled { 0.45 } else { 1.0 };
-        if pos.x < min_x {
-            pos.x = min_x;
-            let is_floor = gravity_enabled && g_dir.x < -0.25;
-            vel.x = vel.x.abs() * if is_floor { 0.30 } else { default_bounce };
-            if is_floor {
-                vel.y *= 0.985;
+        match container_shape {
+            ContainerShape::Rectangle => {
+                if pos.x < min_x {
+                    resolve_wall(pos, vel, Vec2::NEG_X, min_x - pos.x, gravity_enabled, g_dir, default_bounce);
+                } else if pos.x > max_x {
+                    resolve_wall(pos, vel, Vec2::X, pos.x - max_x, gravity_enabled, g_dir, default_bounce);
+                }
+                if pos.y < min_y {
+                    resolve_wall(pos, vel, Vec2::NEG_Y, min_y - pos.y, gravity_enabled, g_dir, default_bounce);
+                } else if pos.y > max_y {
+                    resolve_wall(pos, vel, Vec2::Y, pos.y - max_y, gravity_enabled, g_dir, default_bounce);
+                }
             }
-        } else if pos.x > max_x {
-            pos.x = max_x;
-            let is_floor = gravity_enabled && g_dir.x > 0.25;
-            vel.x = -vel.x.abs() * if is_floor { 0.30 } else { default_bounce };
-            if is_floor {
-                vel.y *= 0.985;
+            ContainerShape::Circle => {
+                let dist_sq = pos.length_squared();
+                if dist_sq > circle_max_r * circle_max_r {
+                    let dist = dist_sq.sqrt();
+                    let normal = *pos / dist;
+                    resolve_wall(pos, vel, normal, dist - circle_max_r, gravity_enabled, g_dir, default_bounce);
+                }
             }
-        }
-
-        if pos.y < min_y {
-            pos.y = min_y;
-            let is_floor = gravity_enabled && g_dir.y < -0.25;
-            vel.y = vel.y.abs() * if is_floor { 0.30 } else { default_bounce };
-            if is_floor {
-                vel.x *= 0.985;
-            }
-        } else if pos.y > max_y {
-            pos.y = max_y;
-            let is_floor = gravity_enabled && g_dir.y > 0.25;
-            vel.y = -vel.y.abs() * if is_floor { 0.30 } else { default_bounce };
-            if is_floor {
-                vel.x *= 0.985;
+            ContainerShape::Hexagon | ContainerShape::Triangle => {
+                let sides: usize = if container_shape == ContainerShape::Hexagon { 6 } else { 3 };
+                let step = TAU / sides as f32;
+                let apothem = (ARENA_HALF_H * (std::f32::consts::PI / sides as f32).cos() - radius).max(1.0);
+                let passes = if sides == 3 { 2 } else { 1 };
+                for _ in 0..passes {
+                    for k in 0..sides {
+                        let angle = std::f32::consts::FRAC_PI_2 + (k as f32 + 0.5) * step;
+                        let normal = Vec2::new(angle.cos(), angle.sin());
+                        let pen = pos.dot(normal) - apothem;
+                        if pen > 0.0 {
+                            resolve_wall(pos, vel, normal, pen, gravity_enabled, g_dir, default_bounce);
+                        }
+                    }
+                }
             }
         }
     }
