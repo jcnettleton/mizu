@@ -8,6 +8,7 @@ use bevy::{
 };
 use std::f32::consts::TAU;
 
+use crate::music::MusicSettings;
 use crate::sim::{
     ARENA_HALF_H, ARENA_HALF_W, ContainerShape, CursorMode, DEFAULT_GRAVITY_STRENGTH,
     DEFAULT_UNIT_RADIUS, GravityDirection, MAX_GRAVITY_STRENGTH, MAX_SPAWN_AMOUNT, MAX_UNIT_RADIUS,
@@ -128,6 +129,7 @@ impl ResolutionPreset {
 pub struct UiState {
     pub palette: WaterPalette,
     pub shader_panel_open: bool,
+    pub music_panel_open: bool,
     pub ui_hidden: bool,
     pub zen_hint_timer: f32,
     pub pause_menu_open: bool,
@@ -141,6 +143,9 @@ pub struct HudText;
 
 #[derive(Component)]
 pub struct ShaderPanel;
+
+#[derive(Component)]
+pub struct MusicPanel;
 
 #[derive(Component)]
 pub struct LowFpsBanner;
@@ -172,6 +177,7 @@ pub enum UiAction {
     ContainerPrev,
     ContainerNext,
     ToggleShaderPanel,
+    ToggleMusicPanel,
     PalettePrev,
     PaletteNext,
     ThresholdDown,
@@ -194,6 +200,22 @@ pub enum UiAction {
     WindowModeNext,
     ResolutionPrev,
     ResolutionNext,
+    ToggleMusicMute,
+    MusicVolumeDown,
+    MusicVolumeUp,
+    ToggleMusicReactive,
+    TogglePad,
+    PadInstPrev,
+    PadInstNext,
+    ToggleBells,
+    BellInstPrev,
+    BellInstNext,
+    ToggleBass,
+    BassInstPrev,
+    BassInstNext,
+    TogglePulse,
+    PulseInstPrev,
+    PulseInstNext,
 }
 
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
@@ -206,6 +228,7 @@ pub enum UiLabel {
     Motion,
     Container,
     ShaderPanelBtn,
+    MusicPanelBtn,
     Palette,
     Threshold,
     Foam,
@@ -216,6 +239,17 @@ pub enum UiLabel {
     Ramp,
     WindowMode,
     Resolution,
+    MusicMute,
+    MusicVolume,
+    MusicReactive,
+    PadEnabled,
+    PadInst,
+    BellsEnabled,
+    BellInst,
+    BassEnabled,
+    BassInst,
+    PulseEnabled,
+    PulseInst,
 }
 
 fn spawn_pill_button(
@@ -419,6 +453,15 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
 
                 spawn_pill_button(
                     row,
+                    "Music",
+                    libron.clone(),
+                    UiAction::ToggleMusicPanel,
+                    Some(UiLabel::MusicPanelBtn),
+                    12.0,
+                );
+
+                spawn_pill_button(
+                    row,
                     "Hide (H)",
                     libron.clone(),
                     UiAction::ToggleHideUi,
@@ -427,16 +470,17 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                 );
             });
 
-            // Collapsible Water & Shader Control Panel
+            // Collapsible Water & Shader Control Panel (2 columns)
             col.spawn((
                 Node {
                     display: Display::None,
-                    width: Val::Px(276.0),
+                    width: Val::Px(548.0),
                     padding: UiRect::all(Val::Px(12.0)),
                     border: UiRect::all(Val::Px(1.0)),
                     border_radius: BorderRadius::all(Val::Px(8.0)),
-                    flex_direction: FlexDirection::Column,
-                    row_gap: Val::Px(10.0),
+                    flex_direction: FlexDirection::Row,
+                    column_gap: Val::Px(16.0),
+                    align_items: AlignItems::Start,
                     ..default()
                 },
                 BorderColor::all(PANEL_BORDER),
@@ -444,16 +488,24 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                 Interaction::None,
                 ShaderPanel,
             ))
-            .with_children(|panel| {
-                panel.spawn((
-                    Text::new("LIQUID"),
-                    TextFont {
-                        font: libron.clone(),
-                        font_size: 13.0,
+            .with_children(|panel_row| {
+                panel_row
+                    .spawn(Node {
+                        width: Val::Px(254.0),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(10.0),
                         ..default()
-                    },
-                    TextColor(TEXT_MUTED),
-                ));
+                    })
+                    .with_children(|panel| {
+                        panel.spawn((
+                            Text::new("LIQUID"),
+                            TextFont {
+                                font: libron.clone(),
+                                font_size: 13.0,
+                                ..default()
+                            },
+                            TextColor(TEXT_MUTED),
+                        ));
 
                 spawn_stepper_row(
                     panel,
@@ -564,7 +616,16 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                     "<",
                     ">",
                 );
+                    });
 
+                panel_row
+                    .spawn(Node {
+                        width: Val::Px(254.0),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(10.0),
+                        ..default()
+                    })
+                    .with_children(|panel| {
                 panel.spawn((
                     Text::new("GRAVITY"),
                     TextFont {
@@ -573,10 +634,6 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                         ..default()
                     },
                     TextColor(TEXT_MUTED),
-                    Node {
-                        margin: UiRect::top(Val::Px(4.0)),
-                        ..default()
-                    },
                 ));
 
                 spawn_stepper_row(
@@ -642,6 +699,212 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                             UiAction::ResetShader,
                             None,
                             12.0,
+                        );
+                    });
+                    });
+            });
+
+            // Collapsible Generative Music Panel (2 columns)
+            col.spawn((
+                Node {
+                    display: Display::None,
+                    width: Val::Px(548.0),
+                    padding: UiRect::all(Val::Px(12.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    border_radius: BorderRadius::all(Val::Px(8.0)),
+                    flex_direction: FlexDirection::Row,
+                    column_gap: Val::Px(16.0),
+                    align_items: AlignItems::Start,
+                    ..default()
+                },
+                BorderColor::all(PANEL_BORDER),
+                BackgroundColor(PANEL_BG),
+                Interaction::None,
+                MusicPanel,
+            ))
+            .with_children(|panel_row| {
+                panel_row
+                    .spawn(Node {
+                        width: Val::Px(254.0),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(10.0),
+                        ..default()
+                    })
+                    .with_children(|panel| {
+                        panel.spawn((
+                            Text::new("MUSIC"),
+                            TextFont {
+                                font: libron.clone(),
+                                font_size: 13.0,
+                                ..default()
+                            },
+                            TextColor(TEXT_MUTED),
+                        ));
+                        spawn_stepper_row(
+                            panel,
+                            "Sound",
+                            "ON",
+                            libron.clone(),
+                            UiAction::ToggleMusicMute,
+                            UiAction::ToggleMusicMute,
+                            UiLabel::MusicMute,
+                            "<",
+                            ">",
+                        );
+                        spawn_stepper_row(
+                            panel,
+                            "Volume",
+                            "60%",
+                            libron.clone(),
+                            UiAction::MusicVolumeDown,
+                            UiAction::MusicVolumeUp,
+                            UiLabel::MusicVolume,
+                            "-",
+                            "+",
+                        );
+                        spawn_stepper_row(
+                            panel,
+                            "Reactive",
+                            "Auto",
+                            libron.clone(),
+                            UiAction::ToggleMusicReactive,
+                            UiAction::ToggleMusicReactive,
+                            UiLabel::MusicReactive,
+                            "<",
+                            ">",
+                        );
+                        panel.spawn((
+                            Text::new("PAD"),
+                            TextFont {
+                                font: libron.clone(),
+                                font_size: 13.0,
+                                ..default()
+                            },
+                            TextColor(TEXT_MUTED),
+                            Node {
+                                margin: UiRect::top(Val::Px(4.0)),
+                                ..default()
+                            },
+                        ));
+                        spawn_stepper_row(
+                            panel,
+                            "Enabled",
+                            "ON",
+                            libron.clone(),
+                            UiAction::TogglePad,
+                            UiAction::TogglePad,
+                            UiLabel::PadEnabled,
+                            "<",
+                            ">",
+                        );
+                        spawn_stepper_row(
+                            panel,
+                            "Tone",
+                            "Choir",
+                            libron.clone(),
+                            UiAction::PadInstPrev,
+                            UiAction::PadInstNext,
+                            UiLabel::PadInst,
+                            "<",
+                            ">",
+                        );
+                    });
+
+                panel_row
+                    .spawn(Node {
+                        width: Val::Px(254.0),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(10.0),
+                        ..default()
+                    })
+                    .with_children(|panel| {
+                        panel.spawn((
+                            Text::new("BELLS"),
+                            TextFont {
+                                font: libron.clone(),
+                                font_size: 13.0,
+                                ..default()
+                            },
+                            TextColor(TEXT_MUTED),
+                        ));
+                        spawn_stepper_row(
+                            panel,
+                            "Enabled",
+                            "ON",
+                            libron.clone(),
+                            UiAction::ToggleBells,
+                            UiAction::ToggleBells,
+                            UiLabel::BellsEnabled,
+                            "<",
+                            ">",
+                        );
+                        spawn_stepper_row(
+                            panel,
+                            "Tone",
+                            "Marimba",
+                            libron.clone(),
+                            UiAction::BellInstPrev,
+                            UiAction::BellInstNext,
+                            UiLabel::BellInst,
+                            "<",
+                            ">",
+                        );
+                        panel.spawn((
+                            Text::new("BASS & PULSE"),
+                            TextFont {
+                                font: libron.clone(),
+                                font_size: 13.0,
+                                ..default()
+                            },
+                            TextColor(TEXT_MUTED),
+                            Node {
+                                margin: UiRect::top(Val::Px(4.0)),
+                                ..default()
+                            },
+                        ));
+                        spawn_stepper_row(
+                            panel,
+                            "Bass",
+                            "ON",
+                            libron.clone(),
+                            UiAction::ToggleBass,
+                            UiAction::ToggleBass,
+                            UiLabel::BassEnabled,
+                            "<",
+                            ">",
+                        );
+                        spawn_stepper_row(
+                            panel,
+                            "Bass Tone",
+                            "Pluck",
+                            libron.clone(),
+                            UiAction::BassInstPrev,
+                            UiAction::BassInstNext,
+                            UiLabel::BassInst,
+                            "<",
+                            ">",
+                        );
+                        spawn_stepper_row(
+                            panel,
+                            "Pulse",
+                            "ON",
+                            libron.clone(),
+                            UiAction::TogglePulse,
+                            UiAction::TogglePulse,
+                            UiLabel::PulseEnabled,
+                            "<",
+                            ">",
+                        );
+                        spawn_stepper_row(
+                            panel,
+                            "Pulse Tone",
+                            "Wood",
+                            libron.clone(),
+                            UiAction::PulseInstPrev,
+                            UiAction::PulseInstNext,
+                            UiLabel::PulseInst,
+                            "<",
+                            ">",
                         );
                     });
             });
@@ -982,19 +1245,45 @@ pub struct UiQueries<'w, 's> {
         'w,
         's,
         &'static mut Node,
-        (With<ShaderPanel>, Without<ZenHideable>, Without<PauseMenuOverlay>),
+        (
+            With<ShaderPanel>,
+            Without<MusicPanel>,
+            Without<ZenHideable>,
+            Without<PauseMenuOverlay>,
+        ),
+    >,
+    music_panel: Query<
+        'w,
+        's,
+        &'static mut Node,
+        (
+            With<MusicPanel>,
+            Without<ShaderPanel>,
+            Without<ZenHideable>,
+            Without<PauseMenuOverlay>,
+        ),
     >,
     zen_hideable: Query<
         'w,
         's,
         &'static mut Node,
-        (With<ZenHideable>, Without<ShaderPanel>, Without<PauseMenuOverlay>),
+        (
+            With<ZenHideable>,
+            Without<ShaderPanel>,
+            Without<MusicPanel>,
+            Without<PauseMenuOverlay>,
+        ),
     >,
     pause_menu: Query<
         'w,
         's,
         &'static mut Node,
-        (With<PauseMenuOverlay>, Without<ShaderPanel>, Without<ZenHideable>),
+        (
+            With<PauseMenuOverlay>,
+            Without<ShaderPanel>,
+            Without<MusicPanel>,
+            Without<ZenHideable>,
+        ),
     >,
     windows: Query<'w, 's, &'static mut Window, With<PrimaryWindow>>,
     camera_q: Query<'w, 's, (&'static Camera, &'static GlobalTransform), Without<OffscreenCamera>>,
@@ -1020,6 +1309,7 @@ pub fn handle_input(
     assets: Res<UnitAssets>,
     mut state: ResMut<SimState>,
     mut ui_state: ResMut<UiState>,
+    mut music: ResMut<MusicSettings>,
     mut grid: ResMut<SpatialGrid>,
     mut water_materials: ResMut<Assets<WaterMaterial>>,
     mut units: Query<(
@@ -1031,6 +1321,7 @@ pub fn handle_input(
     )>,
     mut ui: UiQueries,
 ) {
+    let mut music_dirty = music.is_changed();
     let mut force_delta: f32 = 0.0;
     let mut amount_delta: isize = 0;
     let is_spawn_mode = state.cursor_mode == CursorMode::Spawn;
@@ -1072,6 +1363,7 @@ pub fn handle_input(
     let mut gravity_toggled = keys.just_pressed(KeyCode::KeyG);
     let mut cursor_toggled = keys.just_pressed(KeyCode::KeyC);
     let mut panel_toggled = keys.just_pressed(KeyCode::Tab) && !ui_state.pause_menu_open;
+    let mut music_panel_toggled = false;
     let mut hide_ui_toggled = keys.just_pressed(KeyCode::KeyH) && !ui_state.pause_menu_open;
     let mut pause_menu_toggled = keys.just_pressed(KeyCode::Escape);
     let mut shader_dirty = false;
@@ -1138,6 +1430,7 @@ pub fn handle_input(
                     container_dirty = true;
                 }
                 UiAction::ToggleShaderPanel => panel_toggled = true,
+                UiAction::ToggleMusicPanel => music_panel_toggled = true,
                 UiAction::PalettePrev => {
                     ui_state.palette = ui_state.palette.prev();
                     shader_dirty = true;
@@ -1258,6 +1551,70 @@ pub fn handle_input(
                     ui_state.resolution_preset = ui_state.resolution_preset.next();
                     resolution_dirty = true;
                 }
+                UiAction::ToggleMusicMute => {
+                    music.muted = !music.muted;
+                    music_dirty = true;
+                }
+                UiAction::MusicVolumeDown => {
+                    music.volume = (music.volume - 0.1).clamp(0.0, 1.0);
+                    music_dirty = true;
+                }
+                UiAction::MusicVolumeUp => {
+                    music.volume = (music.volume + 0.1).clamp(0.0, 1.0);
+                    music_dirty = true;
+                }
+                UiAction::ToggleMusicReactive => {
+                    music.reactive = !music.reactive;
+                    music_dirty = true;
+                }
+                UiAction::TogglePad => {
+                    music.layers.pad_enabled = !music.layers.pad_enabled;
+                    music_dirty = true;
+                }
+                UiAction::PadInstPrev => {
+                    music.layers.pad_instrument = music.layers.pad_instrument.prev();
+                    music_dirty = true;
+                }
+                UiAction::PadInstNext => {
+                    music.layers.pad_instrument = music.layers.pad_instrument.next();
+                    music_dirty = true;
+                }
+                UiAction::ToggleBells => {
+                    music.layers.bells_enabled = !music.layers.bells_enabled;
+                    music_dirty = true;
+                }
+                UiAction::BellInstPrev => {
+                    music.layers.bell_instrument = music.layers.bell_instrument.prev();
+                    music_dirty = true;
+                }
+                UiAction::BellInstNext => {
+                    music.layers.bell_instrument = music.layers.bell_instrument.next();
+                    music_dirty = true;
+                }
+                UiAction::ToggleBass => {
+                    music.layers.bass_enabled = !music.layers.bass_enabled;
+                    music_dirty = true;
+                }
+                UiAction::BassInstPrev => {
+                    music.layers.bass_instrument = music.layers.bass_instrument.prev();
+                    music_dirty = true;
+                }
+                UiAction::BassInstNext => {
+                    music.layers.bass_instrument = music.layers.bass_instrument.next();
+                    music_dirty = true;
+                }
+                UiAction::TogglePulse => {
+                    music.layers.pulse_enabled = !music.layers.pulse_enabled;
+                    music_dirty = true;
+                }
+                UiAction::PulseInstPrev => {
+                    music.layers.pulse_instrument = music.layers.pulse_instrument.prev();
+                    music_dirty = true;
+                }
+                UiAction::PulseInstNext => {
+                    music.layers.pulse_instrument = music.layers.pulse_instrument.next();
+                    music_dirty = true;
+                }
             }
         }
 
@@ -1270,6 +1627,9 @@ pub fn handle_input(
         ) || matches!(
             action,
             UiAction::ToggleShaderPanel if ui_state.shader_panel_open
+        ) || matches!(
+            action,
+            UiAction::ToggleMusicPanel if ui_state.music_panel_open
         );
 
         *border = BorderColor::all(if *interaction == Interaction::Hovered {
@@ -1288,8 +1648,31 @@ pub fn handle_input(
 
     if panel_toggled {
         ui_state.shader_panel_open = !ui_state.shader_panel_open;
+        if ui_state.shader_panel_open {
+            ui_state.music_panel_open = false;
+            for mut node in &mut ui.music_panel {
+                node.display = Display::None;
+            }
+        }
         for mut node in &mut ui.shader_panel {
             node.display = if ui_state.shader_panel_open {
+                Display::Flex
+            } else {
+                Display::None
+            };
+        }
+    }
+
+    if music_panel_toggled {
+        ui_state.music_panel_open = !ui_state.music_panel_open;
+        if ui_state.music_panel_open {
+            ui_state.shader_panel_open = false;
+            for mut node in &mut ui.shader_panel {
+                node.display = Display::None;
+            }
+        }
+        for mut node in &mut ui.music_panel {
+            node.display = if ui_state.music_panel_open {
                 Display::Flex
             } else {
                 Display::None
@@ -1399,8 +1782,10 @@ pub fn handle_input(
         || size_dirty
         || colors_dirty
         || panel_toggled
+        || music_panel_toggled
         || window_mode_dirty
         || resolution_dirty
+        || music_dirty
     {
         let params = water_materials
             .get(&assets.water_material)
@@ -1444,6 +1829,13 @@ pub fn handle_input(
                         "Visuals (Tab)".to_string()
                     };
                 }
+                UiLabel::MusicPanelBtn => {
+                    **text = if ui_state.music_panel_open {
+                        "Music ▲".to_string()
+                    } else {
+                        "Music".to_string()
+                    };
+                }
                 UiLabel::Palette => {
                     **text = ui_state.palette.name().to_string();
                 }
@@ -1477,6 +1869,39 @@ pub fn handle_input(
                 }
                 UiLabel::Resolution => {
                     **text = ui_state.resolution_preset.name().to_string();
+                }
+                UiLabel::MusicMute => {
+                    **text = if music.muted { "MUTED" } else { "ON" }.to_string();
+                }
+                UiLabel::MusicVolume => {
+                    **text = format!("{}%", (music.volume * 100.0).round() as i32);
+                }
+                UiLabel::MusicReactive => {
+                    **text = if music.reactive { "Auto" } else { "Locked" }.to_string();
+                }
+                UiLabel::PadEnabled => {
+                    **text = if music.layers.pad_enabled { "ON" } else { "OFF" }.to_string();
+                }
+                UiLabel::PadInst => {
+                    **text = music.layers.pad_instrument.name().to_string();
+                }
+                UiLabel::BellsEnabled => {
+                    **text = if music.layers.bells_enabled { "ON" } else { "OFF" }.to_string();
+                }
+                UiLabel::BellInst => {
+                    **text = music.layers.bell_instrument.name().to_string();
+                }
+                UiLabel::BassEnabled => {
+                    **text = if music.layers.bass_enabled { "ON" } else { "OFF" }.to_string();
+                }
+                UiLabel::BassInst => {
+                    **text = music.layers.bass_instrument.name().to_string();
+                }
+                UiLabel::PulseEnabled => {
+                    **text = if music.layers.pulse_enabled { "ON" } else { "OFF" }.to_string();
+                }
+                UiLabel::PulseInst => {
+                    **text = music.layers.pulse_instrument.name().to_string();
                 }
             }
         }

@@ -3232,6 +3232,8 @@ name = "mizu"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "cpal",
+ "crossbeam-channel",
  "image",
  "log",
  "tracing",

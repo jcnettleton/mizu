@@ -1,3 +1,4 @@
+mod music;
 mod sim;
 mod ui;
 mod water;
@@ -8,6 +9,7 @@ use bevy::{
     sprite_render::Material2dPlugin,
 };
 
+use music::MusicPlugin;
 use sim::{
     ARENA_HALF_H, ARENA_HALF_W, DEFAULT_UNIT_RADIUS, SimState, SpatialGrid, grid_cell_size,
     step_simulation,
@@ -27,6 +29,7 @@ fn main() -> AppExit {
             }),
             FrameTimeDiagnosticsPlugin::default(),
             Material2dPlugin::<WaterMaterial>::default(),
+            MusicPlugin,
         ))
         .insert_resource(ClearColor(Color::srgb(0.05, 0.06, 0.09)))
         .insert_resource(Time::<Fixed>::from_hz(120.0))
