@@ -238,25 +238,17 @@ pub enum ParticleGradientMode {
     #[default]
     Speed,
     Height,
-    Density,
     Radial,
     Flow,
 }
 
 impl ParticleGradientMode {
-    pub const ALL: [Self; 5] = [
-        Self::Speed,
-        Self::Height,
-        Self::Density,
-        Self::Radial,
-        Self::Flow,
-    ];
+    pub const ALL: [Self; 4] = [Self::Speed, Self::Height, Self::Radial, Self::Flow];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Speed => "Speed",
             Self::Height => "Height",
-            Self::Density => "Density",
             Self::Radial => "Radial",
             Self::Flow => "Flow",
         }
@@ -469,7 +461,6 @@ impl SimState {
 pub fn particle_color_with(
     pos: Vec2,
     vel: Vec2,
-    density: f32,
     base_hue: f32,
     gradient_mode: ParticleGradientMode,
     gradient_reversed: bool,
@@ -492,7 +483,6 @@ pub fn particle_color_with(
         ParticleGradientMode::Height => {
             ((pos.y + ARENA_HALF_H) / (2.0 * ARENA_HALF_H)).clamp(0.0, 1.0)
         }
-        ParticleGradientMode::Density => density.clamp(0.0, 1.0),
         ParticleGradientMode::Radial => {
             let max_r = ARENA_HALF_W.hypot(ARENA_HALF_H) * 0.85;
             (pos.length() / max_r).clamp(0.0, 1.0)
@@ -515,17 +505,10 @@ pub fn particle_color_with(
 }
 
 #[inline]
-pub fn particle_color(
-    pos: Vec2,
-    vel: Vec2,
-    density: f32,
-    base_hue: f32,
-    state: &SimState,
-) -> Color {
+pub fn particle_color(pos: Vec2, vel: Vec2, base_hue: f32, state: &SimState) -> Color {
     particle_color_with(
         pos,
         vel,
-        density,
         base_hue,
         state.gradient_mode,
         state.gradient_reversed,
@@ -538,7 +521,6 @@ pub struct Unit {
     pub pos: Vec2,
     pub vel: Vec2,
     pub base_hue: f32,
-    pub density: f32,
     pub heat: f32,
 }
 
@@ -632,7 +614,7 @@ pub fn spawn_units(
         let color = if state.water_mode {
             Color::WHITE
         } else {
-            particle_color(pos, vel, 0.0, base_hue, state)
+            particle_color(pos, vel, base_hue, state)
         };
 
         batch.push((
@@ -648,7 +630,6 @@ pub fn spawn_units(
                 pos,
                 vel,
                 base_hue,
-                density: 0.0,
                 heat,
             },
         ));
@@ -697,7 +678,7 @@ pub fn spawn_units_at(
         let color = if state.water_mode {
             Color::WHITE
         } else {
-            particle_color(pos, vel, 0.0, base_hue, state)
+            particle_color(pos, vel, base_hue, state)
         };
 
         batch.push((
@@ -713,7 +694,6 @@ pub fn spawn_units_at(
                 pos,
                 vel,
                 base_hue,
-                density: 0.0,
                 heat,
             },
         ));
@@ -974,14 +954,7 @@ pub fn step_simulation(
 
     let min_dist = radius * 2.0;
     let min_dist_sq = min_dist * min_dist;
-    let track_density = !state.water_mode && state.gradient_mode == ParticleGradientMode::Density;
     let diffuse_heat = motion_mode == MotionMode::LavaLamp;
-    let density_r_sq = grid.cell_size * grid.cell_size;
-    let mut neighbor_counts = if track_density {
-        vec![0u16; n]
-    } else {
-        Vec::new()
-    };
 
     let cols = grid.cols as isize;
     let rows = grid.rows as isize;
@@ -999,10 +972,6 @@ pub fn step_simulation(
                     }
                     let delta = data[j].0 - data[i].0;
                     let dist_sq = delta.length_squared();
-                    if track_density && dist_sq < density_r_sq {
-                        neighbor_counts[i] = neighbor_counts[i].saturating_add(1);
-                        neighbor_counts[j] = neighbor_counts[j].saturating_add(1);
-                    }
                     if dist_sq < min_dist_sq && dist_sq > 1e-6 {
                         let dist = dist_sq.sqrt();
                         let normal = delta / dist;
@@ -1031,20 +1000,15 @@ pub fn step_simulation(
     }
 
     let water_mode = state.water_mode;
-    for (idx, ((mut unit, mut transform, mut sprite), (pos, vel, heat))) in
-        query.iter_mut().zip(data).enumerate()
-    {
+    for ((mut unit, mut transform, mut sprite), (pos, vel, heat)) in query.iter_mut().zip(data) {
         unit.pos = pos;
         unit.vel = vel;
         unit.heat = heat;
-        if track_density {
-            unit.density = (neighbor_counts[idx] as f32 / 8.0).clamp(0.0, 1.0);
-        }
         transform.translation.x = pos.x;
         transform.translation.y = pos.y;
 
         if !water_mode {
-            sprite.color = particle_color(pos, vel, unit.density, unit.base_hue, &state);
+            sprite.color = particle_color(pos, vel, unit.base_hue, &state);
         }
     }
 }

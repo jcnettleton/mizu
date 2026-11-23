@@ -138,6 +138,39 @@ pub fn breath_envelope(t: f32) -> f32 {
     }
 }
 
+/// Lightweight 2-pole Chamberlin state-variable filter for vowel formants.
+#[derive(Debug, Clone, Default)]
+struct Svf {
+    low: f32,
+    band: f32,
+}
+
+impl Svf {
+    #[inline]
+    fn bandpass(&mut self, input: f32, cutoff_hz: f32, q: f32, inv_sr: f32) -> f32 {
+        let f = (2.0 * (std::f32::consts::PI * cutoff_hz * inv_sr).sin()).clamp(0.001, 0.85);
+        let damp = (1.0 / q.max(0.5)).clamp(0.05, 1.5);
+        let high = input - self.low - damp * self.band;
+        self.band += f * high;
+        self.low += f * self.band;
+        if self.band.abs() < 1.0e-18 {
+            self.band = 0.0;
+        }
+        if self.low.abs() < 1.0e-18 {
+            self.low = 0.0;
+        }
+        self.band
+    }
+}
+
+/// Vowel formant pairs (F1, F2 in Hz) for warm /u/, /o/, /a/, /e/.
+const VOWEL_FORMANTS: [(f32, f32); 4] = [
+    (300.0, 780.0),  // /u/
+    (460.0, 920.0),  // /o/
+    (650.0, 1050.0), // /a/
+    (480.0, 1350.0), // soft /e/
+];
+
 #[derive(Debug, Clone)]
 pub struct PadVoice {
     carrier_phase: f32,
@@ -146,6 +179,10 @@ pub struct PadVoice {
     target_freq: f32,
     breath_phase: f32,
     breath_hz: f32,
+    vowel_phase: f32,
+    vowel_hz: f32,
+    formant1: Svf,
+    formant2: Svf,
     pan: f32,
     base_gain: f32,
 }
@@ -160,6 +197,10 @@ impl PadVoice {
             target_freq: freq,
             breath_phase: start_phase,
             breath_hz: 1.0 / cycle_secs.max(4.0),
+            vowel_phase: start_phase,
+            vowel_hz: 1.0 / (cycle_secs.max(4.0) * 1.45),
+            formant1: Svf::default(),
+            formant2: Svf::default(),
             pan,
             base_gain,
         }
@@ -185,6 +226,10 @@ impl PadVoice {
             if self.breath_phase >= 1.0 {
                 self.breath_phase -= 1.0;
             }
+            self.vowel_phase += self.vowel_hz * inv_sr;
+            if self.vowel_phase >= 1.0 {
+                self.vowel_phase -= 1.0;
+            }
         }
 
         let env = breath_envelope(self.breath_phase);
@@ -202,12 +247,27 @@ impl PadVoice {
                 ((self.carrier_phase * TAU) + mod_sig).sin()
             }
             PadInstrument::Choir => {
-                // Soft detuned dual-oscillator formant blend
+                // Soft detuned harmonic blend + gentle unity-gain vowel formant coloring
                 let p1 = self.carrier_phase;
                 let p2 = (self.carrier_phase * 1.003 + self.mod_phase * 0.002).fract();
-                let s1 = (p1 * TAU).sin() * 0.65 + (p1 * 3.0 * TAU).sin() * (0.18 + 0.16 * brightness);
-                let s2 = (p2 * TAU).sin() * 0.55 + (p2 * 2.0 * TAU).sin() * 0.25;
-                (s1 + s2) * 0.55
+                let exc = (p1 * TAU).sin() * 0.55
+                    + (p1 * 2.0 * TAU).sin() * 0.28
+                    + (p1 * 3.0 * TAU).sin() * (0.14 + 0.12 * brightness)
+                    + (p2 * TAU).sin() * 0.40;
+
+                let vpos = self.vowel_phase * VOWEL_FORMANTS.len() as f32;
+                let v0 = (vpos.floor() as usize) % VOWEL_FORMANTS.len();
+                let v1 = (v0 + 1) % VOWEL_FORMANTS.len();
+                let frac = vpos.fract();
+                let f1_hz = VOWEL_FORMANTS[v0].0 + (VOWEL_FORMANTS[v1].0 - VOWEL_FORMANTS[v0].0) * frac;
+                let f2_hz = VOWEL_FORMANTS[v0].1 + (VOWEL_FORMANTS[v1].1 - VOWEL_FORMANTS[v0].1) * frac;
+
+                let q1 = 2.2;
+                let q2 = 2.4;
+                let bp1 = self.formant1.bandpass(exc, f1_hz, q1, inv_sr) / q1;
+                let bp2 = self.formant2.bandpass(exc, f2_hz, q2, inv_sr) / q2;
+                let base = (p1 * TAU).sin() * 0.42 + (p2 * TAU).sin() * 0.28;
+                (base + bp1 * 0.42 + bp2 * (0.18 + 0.12 * brightness)) * 0.72
             }
             PadInstrument::Organ => {
                 // Warm additive drawbar harmonics (1st, 2nd, 3rd)
@@ -221,6 +281,93 @@ impl PadVoice {
         let sample = raw * env * self.base_gain;
         let angle = (self.pan + 1.0) * std::f32::consts::FRAC_PI_4;
         (sample * angle.cos(), sample * angle.sin())
+    }
+}
+
+/// Gentle modulated stereo ensemble chorus + low-pass filter for the summed pad bus.
+pub struct PadChorus {
+    buf_l: Vec<f32>,
+    buf_r: Vec<f32>,
+    write_pos: usize,
+    lfo_phase: f32,
+    lfo_inc: f32,
+    base_delay_samples: f32,
+    depth_samples: f32,
+    lp_l: f32,
+    lp_r: f32,
+}
+
+impl PadChorus {
+    pub fn new(sample_rate: f32) -> Self {
+        let sr = sample_rate.max(8000.0);
+        let max_len = (sr * 0.045) as usize + 8;
+        Self {
+            buf_l: vec![0.0; max_len],
+            buf_r: vec![0.0; max_len],
+            write_pos: 0,
+            lfo_phase: 0.0,
+            lfo_inc: 0.34 / sr,
+            base_delay_samples: sr * 0.016,
+            depth_samples: sr * 0.0032,
+            lp_l: 0.0,
+            lp_r: 0.0,
+        }
+    }
+
+    #[inline]
+    fn read_frac(buf: &[f32], write_pos: usize, delay_samples: f32) -> f32 {
+        let len = buf.len();
+        let d = delay_samples.clamp(1.0, (len - 2) as f32);
+        let i0 = d as usize;
+        let frac = d - i0 as f32;
+        let idx0 = (write_pos + len - 1 - i0) % len;
+        let idx1 = (write_pos + len - 2 - i0) % len;
+        buf[idx0] + (buf[idx1] - buf[idx0]) * frac
+    }
+
+    #[inline]
+    pub fn process(&mut self, in_l: f32, in_r: f32, brightness: f32, inv_sr: f32) -> (f32, f32) {
+        self.buf_l[self.write_pos] = in_l;
+        self.buf_r[self.write_pos] = in_r;
+        self.write_pos += 1;
+        if self.write_pos >= self.buf_l.len() {
+            self.write_pos = 0;
+        }
+
+        self.lfo_phase += self.lfo_inc;
+        if self.lfo_phase >= 1.0 {
+            self.lfo_phase -= 1.0;
+        }
+        let s = (self.lfo_phase * TAU).sin();
+        let c = (self.lfo_phase * TAU).cos();
+
+        let wet_l = Self::read_frac(
+            &self.buf_l,
+            self.write_pos,
+            self.base_delay_samples + s * self.depth_samples,
+        );
+        let wet_r = Self::read_frac(
+            &self.buf_r,
+            self.write_pos,
+            self.base_delay_samples + c * self.depth_samples,
+        );
+
+        let mix_l = in_l * 0.72 + wet_l * 0.36;
+        let mix_r = in_r * 0.72 + wet_r * 0.36;
+
+        // Gentle 1-pole low-pass tracking brightness (~950 Hz .. 4500 Hz)
+        let cutoff = 950.0 + 3550.0 * brightness.clamp(0.0, 1.0);
+        let alpha = (TAU * cutoff * inv_sr).clamp(0.02, 0.75);
+        self.lp_l += (mix_l - self.lp_l) * alpha;
+        self.lp_r += (mix_r - self.lp_r) * alpha;
+        if self.lp_l.abs() < 1.0e-18 {
+            self.lp_l = 0.0;
+        }
+        if self.lp_r.abs() < 1.0e-18 {
+            self.lp_r = 0.0;
+        }
+
+        (self.lp_l, self.lp_r)
     }
 }
 
@@ -540,6 +687,8 @@ mod tests {
         let sr = 44100.0;
         let inv_sr = 1.0 / sr;
         let mut pad = PadVoice::new(60, 12.0, 0.25, 0.0, 0.3);
+        let mut choir_pad = PadVoice::new(64, 14.0, 0.25, 0.0, 0.3);
+        let mut pad_chorus = PadChorus::new(sr);
         let mut bells = BellPool::new();
         bells.trigger(74, 0.8, 2.0, -0.3, 0.5, BellInstrument::Glass, sr);
         let mut bass = BassVoice::new(38, sr);
@@ -550,11 +699,13 @@ mod tests {
 
         for _ in 0..512 {
             let (pl, pr) = pad.next_stereo(inv_sr, 0.001, 0.5, PadInstrument::Rhodes, false);
+            let (cl, cr) = choir_pad.next_stereo(inv_sr, 0.001, 0.5, PadInstrument::Choir, false);
+            let (chl, chr) = pad_chorus.process(pl + cl, pr + cr, 0.5, inv_sr);
             let (bl, br) = bells.next_stereo();
             let bs = bass.next_sample(inv_sr, BassInstrument::Sub);
             let (dl, dr) = pulse.next_stereo(&mut rng);
-            let sum_l = pl + bl + bs + dl;
-            let sum_r = pr + br + bs + dr;
+            let sum_l = chl + bl + bs + dl;
+            let sum_r = chr + br + bs + dr;
             assert!(sum_l.is_finite() && sum_r.is_finite());
             assert!(sum_l.abs() < 2.0 && sum_r.abs() < 2.0);
         }

@@ -1,9 +1,9 @@
 use crate::music::bridge::{LayerConfig, MusicCommand, MusicRx, SimAudioParams};
 use crate::music::fx::SpaceFx;
 use crate::music::sequencer::{
-    BellLoops, DRUM_STEPS, HarmonyState, NUM_BELL_LOOPS, Rng, euclidean_pattern,
+    ArcTide, BellLoops, DRUM_STEPS, HarmonyState, NUM_BELL_LOOPS, Rng, euclidean_pattern,
 };
-use crate::music::synth::{BassVoice, BellPool, PadVoice, PulseSynth};
+use crate::music::synth::{BassVoice, BellPool, PadChorus, PadVoice, PulseSynth};
 use crate::music::theory::{Mode, scale_steps, voice_lead};
 
 const LOOP_BASE_MIDI: [u8; NUM_BELL_LOOPS] = [72, 67, 79, 62];
@@ -28,14 +28,22 @@ pub struct MusicEngine {
     evolve: f32,
     rng: Rng,
     harmony: HarmonyState,
+    arc_tide: ArcTide,
     pad_notes: [u8; 4],
     pad_voices: [PadVoice; 4],
+    pad_chorus: PadChorus,
     bell_loops: BellLoops,
     bells: BellPool,
     bass: BassVoice,
+    bass_leaned_fifth: bool,
+    bass_rest_bars: u8,
+    bass_rest_gain: f32,
+    bass_rest_slew: f32,
     pulse: PulseSynth,
+    pulse_rest_bars: u8,
     drum_patterns: [u32; 3],
     drum_pos: [usize; 3],
+    swing: f32,
     sixteenth_samples: f32,
     sixteenth_accum: f32,
     sixteenth_count: u32,
@@ -49,9 +57,11 @@ impl MusicEngine {
         let gain_slew = 1.0 - (-1.0 / (0.04 * sr)).exp();
         let freq_slew = 1.0 - (-1.0 / (0.65 * sr)).exp();
         let param_slew = 1.0 - (-1.0 / (0.35 * sr)).exp();
+        let bass_rest_slew = 1.0 - (-1.0 / (0.55 * sr)).exp();
 
         let mut rng = Rng::new(0x5EED_1234);
         let harmony = HarmonyState::new(2, Mode::Dorian, 24.0); // D Dorian
+        let arc_tide = ArcTide::new(150.0); // 2.5-minute macro tide
         let initial_notes = [50, 53, 57, 60];
         let pad_notes = voice_lead(
             &initial_notes,
@@ -63,12 +73,7 @@ impl MusicEngine {
         let bell_loops = BellLoops::new(&mut rng, params.density);
 
         let sixteenth_samples = (60.0 / params.tempo_bpm / 4.0) * sr;
-
-        let drum_patterns = [
-            euclidean_pattern(3, DRUM_STEPS[0], 0),
-            euclidean_pattern(4, DRUM_STEPS[1], 2),
-            euclidean_pattern(1, DRUM_STEPS[2], 3),
-        ];
+        let drum_patterns = Self::compute_drum_patterns(params.density);
 
         Self {
             rx,
@@ -88,7 +93,12 @@ impl MusicEngine {
             evolve: 0.35,
             rng,
             bass: BassVoice::new(36 + harmony.chord_pcs[0], sr),
+            bass_leaned_fifth: false,
+            bass_rest_bars: 0,
+            bass_rest_gain: 1.0,
+            bass_rest_slew,
             harmony,
+            arc_tide,
             pad_notes,
             pad_voices: [
                 PadVoice::new(pad_notes[0], 12.0, 0.00, -0.55, 0.24),
@@ -96,16 +106,35 @@ impl MusicEngine {
                 PadVoice::new(pad_notes[2], 17.2, 0.50, 0.18, 0.19),
                 PadVoice::new(pad_notes[3], 20.1, 0.75, 0.55, 0.18),
             ],
+            pad_chorus: PadChorus::new(sr),
             bell_loops,
             bells: BellPool::new(),
             pulse: PulseSynth::new(),
+            pulse_rest_bars: 0,
             drum_patterns,
             drum_pos: [0; 3],
+            swing: 0.14,
             sixteenth_samples,
             sixteenth_accum: 0.0,
             sixteenth_count: 0,
             fx: SpaceFx::new(sr),
         }
+    }
+
+    fn compute_drum_patterns(density: f32) -> [u32; 3] {
+        let d = density.clamp(0.0, 1.0);
+        let k0 = (1.0 + d * 4.0).round() as usize;
+        let k1 = (2.0 + d * 5.0).round() as usize;
+        let k2 = if d > 0.35 {
+            (1.0 + (d - 0.35) * 3.0).round() as usize
+        } else {
+            0
+        };
+        [
+            euclidean_pattern(k0, DRUM_STEPS[0], 0),
+            euclidean_pattern(k1, DRUM_STEPS[1], 2),
+            euclidean_pattern(k2, DRUM_STEPS[2], 3),
+        ]
     }
 
     fn apply_chord_change(&mut self) {
@@ -119,6 +148,7 @@ impl MusicEngine {
             voice.set_target_note(self.pad_notes[i]);
         }
         self.bass.set_target_pc(self.harmony.chord_pcs[0], 36);
+        self.bass_leaned_fifth = false;
     }
 
     fn bell_midi_note(&self, loop_idx: usize, degree_offset: i8) -> u8 {
@@ -138,11 +168,38 @@ impl MusicEngine {
         note as u8
     }
 
-    fn on_sixteenth(&mut self) {
-        // Step Euclidean percussion
+    fn on_sixteenth(&mut self, eff_density: f32, eff_brightness: f32, arc_mod: f32) {
+        // Every bar (16 sixteenths): update dynamic Euclidean patterns and organic rest bars
+        if self.sixteenth_count % 16 == 0 {
+            self.drum_patterns = Self::compute_drum_patterns(eff_density);
+
+            let calm = (1.0 - eff_density).clamp(0.0, 1.0);
+            let tide_dip = (-arc_mod).max(0.0);
+
+            if self.pulse_rest_bars > 0 {
+                self.pulse_rest_bars -= 1;
+            } else {
+                let pulse_rest_prob = 0.08 + 0.22 * calm + 0.10 * tide_dip;
+                if self.rng.next_f32() < pulse_rest_prob {
+                    self.pulse_rest_bars = 1 + self.rng.range(3) as u8;
+                }
+            }
+
+            if self.bass_rest_bars > 0 {
+                self.bass_rest_bars -= 1;
+            } else {
+                let bass_rest_prob = 0.05 + 0.16 * calm + 0.08 * tide_dip;
+                if self.rng.next_f32() < bass_rest_prob {
+                    self.bass_rest_bars = 1 + self.rng.range(2) as u8;
+                }
+            }
+        }
+
+        // Step Euclidean percussion (skip triggers during rest bars so tails decay naturally)
+        let pulse_active = self.layers.pulse_enabled && self.pulse_rest_bars == 0;
         for d in 0..3 {
             let pos = self.drum_pos[d];
-            if self.layers.pulse_enabled && (self.drum_patterns[d] >> pos) & 1 != 0 {
+            if pulse_active && (self.drum_patterns[d] >> pos) & 1 != 0 {
                 match d {
                     0 => self.pulse.trigger_kick(
                         self.harmony.chord_pcs[0],
@@ -164,7 +221,7 @@ impl MusicEngine {
         if self.sixteenth_count % 4 == 0 {
             let triggers =
                 self.bell_loops
-                    .step(&mut self.rng, self.params.density, self.evolve, 0.0);
+                    .step(&mut self.rng, eff_density, self.evolve, arc_mod);
             if self.layers.bells_enabled {
                 for (l, maybe_slot) in triggers.into_iter().enumerate() {
                     if let Some(slot) = maybe_slot
@@ -176,7 +233,7 @@ impl MusicEngine {
                             slot.velocity,
                             LOOP_FM_RATIO[l],
                             LOOP_PAN[l],
-                            self.params.brightness,
+                            eff_brightness,
                             self.layers.bell_instrument,
                             self.sample_rate,
                         );
@@ -198,6 +255,9 @@ impl MusicEngine {
                 MusicCommand::SetMode { root, mode } => {
                     self.harmony.set_mode_and_root(root, mode);
                     self.apply_chord_change();
+                }
+                MusicCommand::SetProgression(p) => {
+                    self.harmony.set_progression(p);
                 }
                 MusicCommand::SetSimParams(p) => {
                     self.target_params = SimAudioParams {
@@ -256,14 +316,41 @@ impl MusicEngine {
         self.fx.reverb.decay = self.params.reverb_decay;
         self.fx.reverb_mix = self.params.reverb_mix;
 
+        let arc_mod = if self.frozen {
+            self.arc_tide.value()
+        } else {
+            self.arc_tide.tick(self.inv_sr)
+        };
+        let eff_brightness = (self.params.brightness + 0.12 * arc_mod).clamp(0.05, 0.95);
+        let eff_density = (self.params.density + 0.15 * arc_mod).clamp(0.05, 0.98);
+
         if !self.frozen {
             if self.harmony.tick(self.inv_sr, &mut self.rng) {
                 self.apply_chord_change();
+            } else if !self.bass_leaned_fifth
+                && self.harmony.elapsed_in_chord >= self.harmony.drift_secs * 0.5
+            {
+                self.bass_leaned_fifth = true;
+                if self.rng.next_f32() < 0.55 {
+                    let fifth_pc = if self.harmony.chord_len >= 3 {
+                        self.harmony.chord_pcs[2]
+                    } else {
+                        (self.harmony.chord_pcs[0] + 7) % 12
+                    };
+                    self.bass.set_target_pc(fifth_pc, 36);
+                }
             }
+
+            let step_mult = if self.sixteenth_count % 2 == 0 {
+                1.0 + self.swing
+            } else {
+                1.0 - self.swing
+            };
+            let step_samples = (self.sixteenth_samples * step_mult).max(1.0);
             self.sixteenth_accum += 1.0;
-            if self.sixteenth_accum >= self.sixteenth_samples {
-                self.sixteenth_accum -= self.sixteenth_samples;
-                self.on_sixteenth();
+            if self.sixteenth_accum >= step_samples {
+                self.sixteenth_accum -= step_samples;
+                self.on_sixteenth(eff_density, eff_brightness, arc_mod);
             }
         }
 
@@ -276,6 +363,8 @@ impl MusicEngine {
         for (g, tgt) in self.layer_gains.iter_mut().zip(targets) {
             *g += (tgt - *g) * self.gain_slew;
         }
+        let bass_rest_tgt = if self.bass_rest_bars == 0 { 1.0 } else { 0.0 };
+        self.bass_rest_gain += (bass_rest_tgt - self.bass_rest_gain) * self.bass_rest_slew;
 
         let mut dry_l = 0.0_f32;
         let mut dry_r = 0.0_f32;
@@ -283,28 +372,35 @@ impl MusicEngine {
         let mut echo_r = 0.0_f32;
 
         let pad_g = self.layer_gains[0];
+        let mut pad_l = 0.0_f32;
+        let mut pad_r = 0.0_f32;
         for voice in &mut self.pad_voices {
             let (vl, vr) = voice.next_stereo(
                 self.inv_sr,
                 self.freq_slew,
-                self.params.brightness,
+                eff_brightness,
                 self.layers.pad_instrument,
                 self.frozen,
             );
-            dry_l += vl * 0.55 * pad_g;
-            dry_r += vr * 0.55 * pad_g;
-            echo_l += vl * 0.25 * pad_g;
-            echo_r += vr * 0.25 * pad_g;
+            pad_l += vl;
+            pad_r += vr;
         }
+        let (pad_ch_l, pad_ch_r) =
+            self.pad_chorus
+                .process(pad_l, pad_r, eff_brightness, self.inv_sr);
+        dry_l += pad_ch_l * 0.55 * pad_g;
+        dry_r += pad_ch_r * 0.55 * pad_g;
+        echo_l += pad_ch_l * 0.25 * pad_g;
+        echo_r += pad_ch_r * 0.25 * pad_g;
 
         let bell_g = self.layer_gains[1];
         let (bl, br) = self.bells.next_stereo();
-        dry_l += bl * 0.65 * bell_g;
-        dry_r += br * 0.65 * bell_g;
-        echo_l += bl * 0.85 * bell_g;
-        echo_r += br * 0.85 * bell_g;
+        dry_l += bl * 0.26 * bell_g;
+        dry_r += br * 0.26 * bell_g;
+        echo_l += bl * 0.38 * bell_g;
+        echo_r += br * 0.38 * bell_g;
 
-        let bass_g = self.layer_gains[2];
+        let bass_g = self.layer_gains[2] * self.bass_rest_gain;
         let bass_s =
             self.bass.next_sample(self.inv_sr, self.layers.bass_instrument) * self.params.bass_level * bass_g;
         dry_l += bass_s;

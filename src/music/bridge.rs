@@ -1,5 +1,6 @@
 use crossbeam_channel::{Receiver, Sender, bounded};
 
+use crate::music::sequencer::ProgressionType;
 use crate::music::synth::{BassInstrument, BellInstrument, PadInstrument, PulseInstrument};
 use crate::music::theory::Mode;
 
@@ -65,6 +66,7 @@ pub enum MusicCommand {
     SetFreeze(bool),
     SetLayers(LayerConfig),
     SetMode { root: u8, mode: Mode },
+    SetProgression(ProgressionType),
     SetSimParams(SimAudioParams),
     TriggerSplash { intensity: f32 },
     NextChord,

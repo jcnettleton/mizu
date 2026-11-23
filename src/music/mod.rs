@@ -13,6 +13,7 @@ use crate::music::bridge::{
     LayerConfig, MusicCommand, MusicRx, MusicTx, SimAudioParams, create_command_channel,
 };
 use crate::music::engine::MusicEngine;
+use crate::music::sequencer::ProgressionType;
 use crate::music::theory::Mode;
 use crate::sim::{ContainerShape, MotionMode, SimState, Unit};
 
@@ -22,6 +23,7 @@ pub struct MusicSettings {
     pub volume: f32,
     pub frozen: bool,
     pub reactive: bool,
+    pub progression: ProgressionType,
     pub layers: LayerConfig,
 }
 
@@ -32,6 +34,7 @@ impl Default for MusicSettings {
             volume: 0.6,
             frozen: false,
             reactive: true,
+            progression: ProgressionType::default(),
             layers: LayerConfig::default(),
         }
     }
@@ -157,6 +160,7 @@ fn sync_music_settings(
     if settings.is_changed() {
         channel.0.send(MusicCommand::SetMuted(settings.muted));
         channel.0.send(MusicCommand::SetVolume(settings.volume));
+        channel.0.send(MusicCommand::SetProgression(settings.progression));
         channel.0.send(MusicCommand::SetLayers(settings.layers));
     }
 

@@ -204,6 +204,8 @@ pub enum UiAction {
     MusicVolumeDown,
     MusicVolumeUp,
     ToggleMusicReactive,
+    MusicProgPrev,
+    MusicProgNext,
     TogglePad,
     PadInstPrev,
     PadInstNext,
@@ -242,6 +244,7 @@ pub enum UiLabel {
     MusicMute,
     MusicVolume,
     MusicReactive,
+    MusicProg,
     PadEnabled,
     PadInst,
     BellsEnabled,
@@ -770,6 +773,17 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                             UiAction::ToggleMusicReactive,
                             UiAction::ToggleMusicReactive,
                             UiLabel::MusicReactive,
+                            "<",
+                            ">",
+                        );
+                        spawn_stepper_row(
+                            panel,
+                            "Chords",
+                            "Drift",
+                            libron.clone(),
+                            UiAction::MusicProgPrev,
+                            UiAction::MusicProgNext,
+                            UiLabel::MusicProg,
                             "<",
                             ">",
                         );
@@ -1567,6 +1581,14 @@ pub fn handle_input(
                     music.reactive = !music.reactive;
                     music_dirty = true;
                 }
+                UiAction::MusicProgPrev => {
+                    music.progression = music.progression.prev();
+                    music_dirty = true;
+                }
+                UiAction::MusicProgNext => {
+                    music.progression = music.progression.next();
+                    music_dirty = true;
+                }
                 UiAction::TogglePad => {
                     music.layers.pad_enabled = !music.layers.pad_enabled;
                     music_dirty = true;
@@ -1760,7 +1782,7 @@ pub fn handle_input(
 
     if colors_dirty && !state.water_mode {
         for (_, unit, _, mut sprite, _) in &mut units {
-            sprite.color = particle_color(unit.pos, unit.vel, unit.density, unit.base_hue, &state);
+            sprite.color = particle_color(unit.pos, unit.vel, unit.base_hue, &state);
         }
     }
 
@@ -1879,6 +1901,9 @@ pub fn handle_input(
                 UiLabel::MusicReactive => {
                     **text = if music.reactive { "Auto" } else { "Locked" }.to_string();
                 }
+                UiLabel::MusicProg => {
+                    **text = music.progression.name().to_string();
+                }
                 UiLabel::PadEnabled => {
                     **text = if music.layers.pad_enabled { "ON" } else { "OFF" }.to_string();
                 }
@@ -1939,8 +1964,7 @@ pub fn handle_input(
             if water {
                 sprite.color = Color::WHITE;
             } else {
-                sprite.color =
-                    particle_color(unit.pos, unit.vel, unit.density, unit.base_hue, &state);
+                sprite.color = particle_color(unit.pos, unit.vel, unit.base_hue, &state);
             }
             *layers = layer.clone();
         }
@@ -2018,14 +2042,12 @@ pub fn handle_input(
             let speed = 55.0 + state.next_f32() * 65.0;
             unit.pos = pos;
             unit.vel = Vec2::new(angle.cos() * speed, angle.sin() * speed);
-            unit.density = 0.0;
             transform.translation.x = pos.x;
             transform.translation.y = pos.y;
             if !water_mode {
                 sprite.color = particle_color_with(
                     unit.pos,
                     unit.vel,
-                    0.0,
                     unit.base_hue,
                     gradient_mode,
                     gradient_reversed,
